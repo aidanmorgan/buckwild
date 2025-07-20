@@ -132,46 +132,6 @@ ERROR_PSK_ENUMERATION_ATTEMPT = 0x17
 
 ## Complete Packet Format Specifications
 
-### Optimized Packet Format Changes
-
-The protocol has been optimized to reduce packet overhead while maintaining security and functionality:
-
-#### Timestamp Format
-- **Previous**: 64-bit timestamp in milliseconds since epoch
-- **Current**: 32-bit timestamp in milliseconds since UTC midnight of current day
-- **Range**: 0-86,399,999 milliseconds (24 hours)
-- **Benefits**: Reduces timestamp size by 50% while maintaining millisecond precision
-- **Rollover**: Timestamps reset at UTC midnight each day
-
-#### HMAC Authentication
-- **Previous**: 256-bit HMAC (32 bytes)
-- **Current**: 128-bit HMAC (16 bytes)
-- **Security**: Standard HMAC-SHA256-128 truncation
-- **Benefits**: Reduces authentication overhead by 50% while maintaining cryptographic strength
-
-#### Header Size Reduction
-- **Previous**: 80-byte common header
-- **Current**: 64-byte common header
-- **Total Reduction**: 20% smaller headers across all packet types
-
-#### Packet Size Comparison
-| Packet Type | Previous Size | Optimized Size | Reduction | % Reduction |
-|-------------|---------------|----------------|-----------|-------------|
-| SYN | 96 bytes | 80 bytes | 16 bytes | 16.7% |
-| SYN-ACK | 100 bytes | 84 bytes | 16 bytes | 16.0% |
-| ACK | 88 bytes | 72 bytes | 16 bytes | 18.2% |
-| DATA | 80+payload | 64+payload | 16 bytes | 20.0% |
-| FIN | 84 bytes | 68 bytes | 16 bytes | 19.0% |
-| HEARTBEAT | 92 bytes | 72 bytes | 20 bytes | 21.7% |
-| RECOVERY | 96 bytes | 80 bytes | 16 bytes | 16.7% |
-| FRAGMENT | 86+data | 70+data | 16 bytes | 18.6% |
-| ERROR | 84+msg | 68+msg | 16 bytes | 19.0% |
-| WINDOW_UPDATE | 82 bytes | 66 bytes | 16 bytes | 19.5% |
-| RST | 84 bytes | 68 bytes | 16 bytes | 19.0% |
-| DISCOVERY | 132 bytes | 100 bytes | 32 bytes | 24.2% |
-| DISCOVERY_RESPONSE | 148 bytes | 116 bytes | 32 bytes | 21.6% |
-| DISCOVERY_CONFIRM | 148 bytes | 116 bytes | 32 bytes | 21.6% |
-
 ### Packet Type Definitions (Standardized)
 ```pseudocode
 // Standardized packet types
@@ -615,6 +575,206 @@ Field Definitions:
 Total DISCOVERY_CONFIRM Packet Size: 64 + 36 + 16 = 116 bytes
 ```
 
+#### 4. Secure Recovery Packet Types
+```pseudocode
+// New packet types for recovery processes
+PACKET_TYPE_TIME_SYNC_REQUEST = 0x0F    // Time synchronization request
+PACKET_TYPE_TIME_SYNC_RESPONSE = 0x10   // Time synchronization response
+PACKET_TYPE_REKEY_REQUEST = 0x11        // Session key rotation request
+PACKET_TYPE_REKEY_RESPONSE = 0x12       // Session key rotation response
+PACKET_TYPE_REPAIR_REQUEST = 0x13       // Sequence repair request
+PACKET_TYPE_REPAIR_RESPONSE = 0x14      // Sequence repair response
+PACKET_TYPE_EMERGENCY_REQUEST = 0x15    // Emergency recovery request
+PACKET_TYPE_EMERGENCY_RESPONSE = 0x16   // Emergency recovery response
+
+// Time synchronization packet structure
+TIME_SYNC_REQUEST Packet Structure (Big-Endian):
++-----------------------------------+
+|         Common Header             |
+|           (64 bytes)             |
++-----------------------------------+
+|    Challenge Nonce (32-bit)      |
++-----------------------------------+
+|    Local Timestamp (32-bit)      |
++-----------------------------------+
+|        Reserved (64-bit)         |
++-----------------------------------+
+
+Field Definitions:
+- Common Header (64 bytes): Standard header with ACK flag set
+- Challenge Nonce (32-bit): Random challenge for time sync (4 bytes)
+- Local Timestamp (32-bit): Sender's current timestamp (4 bytes)
+- Reserved (64-bit): Always 0x0000000000000000 (8 bytes)
+
+Total TIME_SYNC_REQUEST Packet Size: 64 + 16 = 80 bytes
+
+TIME_SYNC_RESPONSE Packet Structure (Big-Endian):
++-----------------------------------+
+|         Common Header             |
+|           (64 bytes)             |
++-----------------------------------+
+|    Challenge Nonce (32-bit)      |
++-----------------------------------+
+|    Local Timestamp (32-bit)      |
++-----------------------------------+
+|    Peer Timestamp (32-bit)       |
++-----------------------------------+
+|        Reserved (32-bit)         |
++-----------------------------------+
+
+Field Definitions:
+- Common Header (64 bytes): Standard header with ACK flag set
+- Challenge Nonce (32-bit): Echo of challenge nonce (4 bytes)
+- Local Timestamp (32-bit): Sender's current timestamp (4 bytes)
+- Peer Timestamp (32-bit): Peer's current timestamp (4 bytes)
+- Reserved (32-bit): Always 0x00000000 (4 bytes)
+
+Total TIME_SYNC_RESPONSE Packet Size: 64 + 16 = 80 bytes
+
+// Session rekey packet structure
+REKEY_REQUEST Packet Structure (Big-Endian):
++-----------------------------------+
+|         Common Header             |
+|           (64 bytes)             |
++-----------------------------------+
+|    Rekey Nonce (32-bit)         |
++-----------------------------------+
+|   New Key Commitment (256-bit)   |
+|                                 |
+|                                 |
+|                                 |
++-----------------------------------+
+|        Reserved (64-bit)         |
++-----------------------------------+
+
+Field Definitions:
+- Common Header (64 bytes): Standard header with SYN flag set
+- Rekey Nonce (32-bit): Random nonce for rekey operation (4 bytes)
+- New Key Commitment (256-bit): Commitment to new session key (32 bytes)
+- Reserved (64-bit): Always 0x0000000000000000 (8 bytes)
+
+Total REKEY_REQUEST Packet Size: 64 + 44 = 108 bytes
+
+REKEY_RESPONSE Packet Structure (Big-Endian):
++-----------------------------------+
+|         Common Header             |
+|           (64 bytes)             |
++-----------------------------------+
+|    Rekey Nonce (32-bit)         |
++-----------------------------------+
+|   New Key Commitment (256-bit)   |
+|                                 |
+|                                 |
+|                                 |
++-----------------------------------+
+|    Confirmation (128-bit)        |
+|                                 |
++-----------------------------------+
+
+Field Definitions:
+- Common Header (64 bytes): Standard header with ACK flag set
+- Rekey Nonce (32-bit): Echo of rekey nonce (4 bytes)
+- New Key Commitment (256-bit): Echo of new key commitment (32 bytes)
+- Confirmation (128-bit): Confirmation of rekey operation (16 bytes)
+
+Total REKEY_RESPONSE Packet Size: 64 + 52 = 116 bytes
+
+// Sequence repair packet structure
+REPAIR_REQUEST Packet Structure (Big-Endian):
++-----------------------------------+
+|         Common Header             |
+|           (64 bytes)             |
++-----------------------------------+
+|    Repair Nonce (32-bit)         |
++-----------------------------------+
+| Last Known Sequence (32-bit)     |
++-----------------------------------+
+| Repair Window Size (32-bit)      |
++-----------------------------------+
+|        Reserved (64-bit)         |
++-----------------------------------+
+
+Field Definitions:
+- Common Header (64 bytes): Standard header with SYN flag set
+- Repair Nonce (32-bit): Random nonce for repair operation (4 bytes)
+- Last Known Sequence (32-bit): Last known sequence number (4 bytes)
+- Repair Window Size (32-bit): Size of repair window (4 bytes)
+- Reserved (64-bit): Always 0x0000000000000000 (8 bytes)
+
+Total REPAIR_REQUEST Packet Size: 64 + 16 = 80 bytes
+
+REPAIR_RESPONSE Packet Structure (Big-Endian):
++-----------------------------------+
+|         Common Header             |
+|           (64 bytes)             |
++-----------------------------------+
+|    Repair Nonce (32-bit)         |
++-----------------------------------+
+| Current Sequence (32-bit)        |
++-----------------------------------+
+| Repair Window Size (32-bit)      |
++-----------------------------------+
+|    Confirmation (64-bit)         |
++-----------------------------------+
+
+Field Definitions:
+- Common Header (64 bytes): Standard header with ACK flag set
+- Repair Nonce (32-bit): Echo of repair nonce (4 bytes)
+- Current Sequence (32-bit): Current sequence number (4 bytes)
+- Repair Window Size (32-bit): Size of repair window (4 bytes)
+- Confirmation (64-bit): Confirmation of repair operation (8 bytes)
+
+Total REPAIR_RESPONSE Packet Size: 64 + 16 = 80 bytes
+
+// Emergency recovery packet structure
+EMERGENCY_REQUEST Packet Structure (Big-Endian):
++-----------------------------------+
+|         Common Header             |
+|           (64 bytes)             |
++-----------------------------------+
+| Emergency Token (32-bit)         |
++-----------------------------------+
+|   Emergency Data (256-bit)       |
+|                                 |
+|                                 |
+|                                 |
++-----------------------------------+
+|        Reserved (64-bit)         |
++-----------------------------------+
+
+Field Definitions:
+- Common Header (64 bytes): Standard header with SYN flag set
+- Emergency Token (32-bit): Emergency recovery token (4 bytes)
+- Emergency Data (256-bit): Emergency recovery data (32 bytes)
+- Reserved (64-bit): Always 0x0000000000000000 (8 bytes)
+
+Total EMERGENCY_REQUEST Packet Size: 64 + 44 = 108 bytes
+
+EMERGENCY_RESPONSE Packet Structure (Big-Endian):
++-----------------------------------+
+|         Common Header             |
+|           (64 bytes)             |
++-----------------------------------+
+| Emergency Token (32-bit)         |
++-----------------------------------+
+|   Emergency Data (256-bit)       |
+|                                 |
+|                                 |
+|                                 |
++-----------------------------------+
+|    Confirmation (128-bit)        |
+|                                 |
++-----------------------------------+
+
+Field Definitions:
+- Common Header (64 bytes): Standard header with ACK flag set
+- Emergency Token (32-bit): Echo of emergency token (4 bytes)
+- Emergency Data (256-bit): Echo of emergency data (32 bytes)
+- Confirmation (128-bit): Confirmation of emergency recovery (16 bytes)
+
+Total EMERGENCY_RESPONSE Packet Size: 64 + 52 = 116 bytes
+```
+
 ## Complete State Machine Specification
 
 ### Session State Variables
@@ -671,770 +831,62 @@ session_state = {
 }
 ```
 
-### Simplified Session States
+### Simplified Session States with Enhanced Recovery
 ```pseudocode
 Session States:
 - CLOSED: No session exists
+- CONNECTING: Client attempting connection (includes discovery if needed)
 - LISTENING: Server waiting for connection
-- SYN_SENT: Client sent SYN, waiting for SYN-ACK
-- SYN_RECEIVED: Server received SYN, sent SYN-ACK
 - ESTABLISHED: Connection active, data flowing
-- FIN_WAIT_1: Sent FIN, waiting for ACK
-- FIN_WAIT_2: Received FIN-ACK, waiting for FIN
-- CLOSE_WAIT: Received FIN, waiting to close
-- CLOSING: Both sides sent FIN, waiting for ACKs
-- LAST_ACK: Sent FIN, waiting for final ACK
-- TIME_WAIT: Connection closing, waiting for timeout
-- RECOVERING: Session recovery in progress
+- CLOSING: Connection termination in progress
+- RECOVERING: Connection recovery in progress
 - ERROR: Error state, connection should be closed
+
+// Recovery states (sub-states within main states)
+Recovery Sub-States:
+- NORMAL: Normal operation
+- RESYNC: Time synchronization recovery
+- REKEY: Session key rotation/recovery
+- REPAIR: Connection repair (sequence number recovery)
+- EMERGENCY: Emergency recovery mode
 ```
 
-### Complete State Transitions with Error Handling
+### Simplified State Transitions with Integrated Recovery
 ```pseudocode
-State Transitions with Error Handling:
-
-CLOSED -> LISTENING: bind()
-LISTENING -> SYN_RECEIVED: receive_syn() [Timeout: 30s]
-LISTENING -> CLOSED: timeout() or error
-LISTENING -> ERROR: receive_invalid_packet()
-
-CLOSED -> SYN_SENT: connect()
-SYN_SENT -> ESTABLISHED: receive_syn_ack() && send_ack()
-SYN_SENT -> CLOSED: timeout() [Timeout: 30s] or error
-SYN_SENT -> ERROR: receive_error() or authentication_failure()
-SYN_SENT -> SYN_SENT: receive_syn() [Send RST]
-
-SYN_RECEIVED -> ESTABLISHED: receive_ack()
-SYN_RECEIVED -> CLOSED: timeout() [Timeout: 30s] or error
-SYN_RECEIVED -> ERROR: receive_error() or authentication_failure()
-SYN_RECEIVED -> SYN_RECEIVED: receive_syn() [Resend SYN-ACK]
-
-ESTABLISHED -> CLOSE_WAIT: receive_fin()
-ESTABLISHED -> ERROR: receive_error() or authentication_failure()
-ESTABLISHED -> RECOVERING: sync_failure() or heartbeat_timeout()
-ESTABLISHED -> ESTABLISHED: receive_data() or receive_ack()
-
-CLOSING -> TIME_WAIT: receive_fin_ack()
-CLOSING -> CLOSED: timeout() [Timeout: 30s] or error
-CLOSING -> ERROR: receive_error()
-
-LAST_ACK -> CLOSED: receive_ack()
-LAST_ACK -> CLOSED: timeout() [Timeout: 30s] or error
-LAST_ACK -> ERROR: receive_error()
-
-TIME_WAIT -> CLOSED: timeout() [Timeout: 60s]
-
-RECOVERING -> ESTABLISHED: recovery_success()
-RECOVERING -> CLOSED: recovery_failure() [Timeout: 30s]
-RECOVERING -> ERROR: max_recovery_attempts_exceeded()
-
-ERROR -> CLOSED: cleanup() [Immediate]
-
-## Discovery Process with Zero-Knowledge Proof
-
-### Zero-Knowledge Discovery Protocol
-
-The discovery process uses a truly zero-knowledge approach that requires no pre-shared keys or secret material exchange. Instead, it relies on Pedersen commitments and zero-knowledge proofs to establish trust and find common PSKs.
-
-```pseudocode
-# Discovery protocol uses Pedersen commitments for zero-knowledge proofs
-# No pre-shared keys are required for the discovery process
-
-// Pedersen commitment implementation follows RFC 9380 (HPKE)
-// Reference: https://tools.ietf.org/html/rfc9380
-// Uses standard elliptic curve cryptography for zero-knowledge proofs
-
-function generate_pedersen_commitment(value, randomness):
-    # Generate Pedersen commitment following RFC 9380 specification
-    # C = g^value * h^randomness where g and h are public generators
-    # This provides perfect hiding and computational binding
-    # Implementation should use standard elliptic curve library (e.g., OpenSSL, BouncyCastle)
-    commitment = elliptic_curve_pedersen_commit(value, randomness)
-    return commitment
-
-function verify_pedersen_commitment(commitment, value, randomness):
-    # Verify Pedersen commitment following RFC 9380 specification
-    # Implementation should use standard elliptic curve library (e.g., OpenSSL, BouncyCastle)
-    expected_commitment = elliptic_curve_pedersen_commit(value, randomness)
-    return constant_time_compare(commitment, expected_commitment)
-
-function generate_psk_commitment(psk_list, challenge_nonce):
-    # Generate Pedersen commitment to PSK list without revealing individual PSKs
-    # This prevents enumeration of available PSKs
-    # Uses RFC 9380 Pedersen commitment for zero-knowledge proof
-    
-    # Hash PSK list for deterministic commitment
-    psk_hash = hash_psk_list(psk_list)
-    
-    # Generate random blinding factor using RFC 5869 HKDF
-    randomness = generate_random_scalar()
-    
-    # Create Pedersen commitment following RFC 9380
-    commitment = generate_pedersen_commitment(psk_hash, randomness)
-    
-    return commitment, randomness
-
-function verify_psk_commitment(commitment, challenge_nonce, psk_count):
-    # Verify Pedersen commitment structure and format
-    # Follows RFC 9380 specification for commitment validation
-    if len(commitment) != PEDERSEN_COMMITMENT_SIZE:
-        return False
-    
-    # Verify commitment is not identity element
-    if commitment == identity_element:
-        return False
-    
-    return True
-```
-
-
-### Discovery States
-```pseudocode
-Discovery States:
-- DISCOVERY_IDLE: No discovery in progress
-- DISCOVERY_INITIATED: Discovery initiated, waiting for response
-- DISCOVERY_RESPONDED: Discovery response received, waiting for confirmation
-- DISCOVERY_COMPLETED: Discovery completed, PSK selected
-- DISCOVERY_FAILED: Discovery failed, no common PSK found
-```
-
-### Discovery State Transitions
-```pseudocode
-Discovery State Transitions:
-
-DISCOVERY_IDLE -> DISCOVERY_INITIATED: initiate_discovery()
-DISCOVERY_INITIATED -> DISCOVERY_RESPONDED: receive_discovery_response()
-DISCOVERY_INITIATED -> DISCOVERY_FAILED: timeout() [Timeout: 10s] or error
-DISCOVERY_RESPONDED -> DISCOVERY_COMPLETED: send_discovery_confirm()
-DISCOVERY_RESPONDED -> DISCOVERY_FAILED: timeout() [Timeout: 10s] or error
-DISCOVERY_COMPLETED -> DISCOVERY_IDLE: start_session_establishment()
-DISCOVERY_FAILED -> DISCOVERY_IDLE: cleanup_discovery()
-```
-
-### Simplified PSK Discovery Protocol
-```pseudocode
-function generate_psk_commitment(psk_list, challenge_nonce):
-    # Generate Pedersen commitment to PSK list without revealing individual PSKs
-    # This prevents enumeration of available PSKs
-    # Uses RFC 9380 Pedersen commitment for zero-knowledge proof
-    
-    # Hash PSK list for deterministic commitment
-    psk_hash = hash_psk_list(psk_list)
-    
-    # Generate random blinding factor using RFC 5869 HKDF
-    randomness = generate_random_scalar()
-    
-    # Create Pedersen commitment following RFC 9380
-    commitment = generate_pedersen_commitment(psk_hash, randomness)
-    
-    return commitment, randomness
-
-function verify_psk_commitment(commitment, challenge_nonce, psk_count):
-    # Verify Pedersen commitment structure and format
-    # Follows RFC 9380 specification for commitment validation
-    if len(commitment) != PEDERSEN_COMMITMENT_SIZE:
-        return False
-    
-    # Verify commitment is not identity element
-    if commitment == identity_element:
-        return False
-    
-    return True
-
-function find_common_psk(initiator_psk_list, responder_psk_list):
-    # Find common PSK between two lists using secure set intersection
-    # Prevents enumeration of available PSKs
-    
-    # Use secure set intersection protocol
-    common_psk_index = secure_set_intersection(initiator_psk_list, responder_psk_list)
-    
-    return common_psk_index
-
-function secure_set_intersection(list_a, list_b):
-    # Secure set intersection that prevents PSK enumeration
-    # Uses oblivious transfer to find intersection without revealing individual PSKs
-    
-    # Generate random blinding factors
-    blinding_factors = generate_random_blinding_factors(len(list_a))
-    
-    # Blind the PSK lists
-    blinded_list_a = blind_psk_list(list_a, blinding_factors)
-    blinded_list_b = blind_psk_list(list_b, blinding_factors)
-    
-    # Find intersection using oblivious transfer
-    intersection = oblivious_set_intersection(blinded_list_a, blinded_list_b)
-    
-    # Unblind the result
-    common_psk_index = unblind_intersection(intersection, blinding_factors)
-    
-    return common_psk_index
-
-## Complete Cryptographic Specifications
-
-### PSK Discovery Protocol Implementation
-```pseudocode
-// PSK discovery parameters
-DISCOVERY_COMMITMENT_SIZE = 32           // Size of PSK commitment in bytes
-DISCOVERY_CHALLENGE_SIZE = 32            // Size of challenge nonce in bytes
-MAX_PSK_LIST_SIZE = 256                  // Maximum number of PSKs per peer
-
-function hash_psk_list(psk_list):
-    # Hash PSK list for commitment generation
-    # Uses SHA256 as specified in RFC 6234
-    
-    if not psk_list:
-        return SHA256(b'')
-    
-    # Sort PSKs for deterministic hashing
-    sorted_psks = sorted(psk_list)
-    
-    # Concatenate all PSKs
-    concatenated = b''
-    for psk in sorted_psks:
-        concatenated += psk
-    
-    return SHA256(concatenated)
-
-function generate_psk_commitment(psk_list, challenge_nonce):
-    # Generate Pedersen commitment to PSK list
-    # Follows RFC 9380 for Pedersen commitments
-    
-    psk_hash = hash_psk_list(psk_list)
-    randomness = generate_random_scalar()
-    commitment = generate_pedersen_commitment(psk_hash, randomness)
-    
-    return commitment, randomness
-
-function verify_psk_commitment(commitment, challenge_nonce, psk_count):
-    # Verify Pedersen commitment structure and format
-    if len(commitment) != PEDERSEN_COMMITMENT_SIZE:
-        return False
-    
-    # Verify commitment is not identity element
-    if commitment == identity_element:
-        return False
-    
-    return True
-
-function generate_psk_selection_commitment(selected_index, psk_list, challenge_nonce, response_nonce):
-    # Generate Pedersen commitment for PSK selection following RFC 9380
-    # This proves that the selected PSK is valid without revealing the selection process
-    
-    # Hash the selection parameters using RFC 6234 SHA256
-    selection_hash = hash_selection_parameters(selected_index, psk_list, challenge_nonce, response_nonce)
-    
-    # Generate random blinding factor using RFC 5869 HKDF
-    randomness = generate_random_scalar()
-    
-    # Create Pedersen commitment following RFC 9380
-    commitment = generate_pedersen_commitment(selection_hash, randomness)
-    
-    return commitment, randomness
-
-function verify_psk_selection_commitment(commitment, selected_index, psk_list, challenge_nonce, response_nonce, randomness):
-    # Verify Pedersen commitment for PSK selection following RFC 9380
-    selection_hash = hash_selection_parameters(selected_index, psk_list, challenge_nonce, response_nonce)
-    expected_commitment = generate_pedersen_commitment(selection_hash, randomness)
-    
-    return constant_time_compare(commitment, expected_commitment)
-
-function hash_selection_parameters(selected_index, psk_list, challenge_nonce, response_nonce):
-    # Hash selection parameters for commitment using RFC 6234 SHA256
-    data = selected_index.to_bytes(2, 'big') + challenge_nonce.to_bytes(8, 'big') + response_nonce.to_bytes(8, 'big')
-    
-    # Add PSK list hash
-    psk_hash = hash_psk_list(psk_list)
-    data += psk_hash
-    
-    return SHA256(data)
-```
-
-### Secure Set Intersection Implementation
-```pseudocode
-function secure_set_intersection(list_a, list_b):
-    # Secure set intersection using oblivious transfer
-    # Prevents enumeration of individual PSKs
-    # Implementation follows RFC 9380 for zero-knowledge proofs
-    
-    # Generate random blinding factors using RFC 5869 HKDF
-    blinding_factors = generate_random_blinding_factors(len(list_a))
-    
-    # Blind the PSK lists using RFC 2104 HMAC-SHA256
-    blinded_list_a = blind_psk_list(list_a, blinding_factors)
-    blinded_list_b = blind_psk_list(list_b, blinding_factors)
-    
-    # Find intersection using oblivious transfer
-    intersection = oblivious_set_intersection(blinded_list_a, blinded_list_b)
-    
-    # Unblind the result
-    common_psk_index = unblind_intersection(intersection, blinding_factors)
-    
-    return common_psk_index
-
-function generate_random_blinding_factors(count):
-    # Generate cryptographically secure random blinding factors
-    # Uses RFC 5869 HKDF for key derivation
-    factors = []
-    for i in range(count):
-        factor = secure_random_bytes(32)
-        factors.append(factor)
-    return factors
-
-function blind_psk_list(psk_list, blinding_factors):
-    # Blind PSK list using RFC 2104 HMAC-SHA256
-    blinded_list = []
-    
-    for i, psk in enumerate(psk_list):
-        blinding_factor = blinding_factors[i]
-        blinded_psk = HMAC_SHA256(blinding_factor, psk)
-        blinded_list.append(blinded_psk)
-    
-    return blinded_list
-
-function oblivious_set_intersection(blinded_list_a, blinded_list_b):
-    # Find intersection without revealing individual values
-    intersection = []
-    
-    # Use hash-based intersection
-    set_b = set(blinded_list_b)
-    
-    for blinded_psk in blinded_list_a:
-        if blinded_psk in set_b:
-            intersection.append(blinded_psk)
-    
-    return intersection
-
-function unblind_intersection(intersection, blinding_factors):
-    # Unblind intersection result to find original index
-    if len(intersection) == 0:
-        return -1  # No common PSK found
-    
-    # Find the index of the first intersection
-    for i, blinding_factor in enumerate(blinding_factors):
-        test_blinded = HMAC_SHA256(blinding_factor, psk_list[i])
-        if test_blinded in intersection:
-            return i
-    
-    return -1
-```
-
-### HKDF Implementation (RFC 5869)
-```pseudocode
-# HKDF implementation follows RFC 5869 specification
-# Reference: https://tools.ietf.org/html/rfc5869
-
-function HKDF_SHA256(salt, ikm, info, length):
-    # HKDF-SHA256 implementation as specified in RFC 5869
-    # salt: salt value
-    # ikm: input keying material
-    # info: context and application specific information
-    # length: length of output keying material
-    
-    # Extract phase
-    prk = HMAC_SHA256(salt, ikm)
-    
-    # Expand phase
-    okm = HKDF_Expand(prk, info, length)
-    
-    return okm
-
-function HKDF_Expand(prk, info, length):
-    # HKDF expand function
-    # prk: pseudorandom key from extract phase
-    # info: context and application specific information
-    # length: length of output keying material
-    
-    if length > 255 * 32:  # SHA256 output size is 32 bytes
-        raise ValueError("Length too long for HKDF")
-    
-    # Calculate number of hash blocks needed
-    n = (length + 31) // 32  # Ceiling division
-    
-    # Initialize output
-    okm = b''
-    t = b''
-    
-    for i in range(1, n + 1):
-        # T(i) = HMAC-Hash(PRK, T(i-1) || info || i)
-        t = HMAC_SHA256(prk, t + info + bytes([i]))
-        okm += t
-    
-    return okm[:length]
-
-function HMAC_SHA256(key, data):
-    # HMAC-SHA256 implementation as specified in RFC 2104
-    # Reference: https://tools.ietf.org/html/rfc2104
-    # key: key for HMAC
-    # data: data to hash
-    
-    # Constants
-    BLOCK_SIZE = 64  # SHA256 block size
-    OUTPUT_SIZE = 32  # SHA256 output size
-    
-    # Prepare key
-    if len(key) > BLOCK_SIZE:
-        key = SHA256(key)
-    
-    if len(key) < BLOCK_SIZE:
-        key = key + b'\x00' * (BLOCK_SIZE - len(key))
-    
-    # Outer and inner padding
-    outer_pad = bytes(x ^ 0x5c for x in key)
-    inner_pad = bytes(x ^ 0x36 for x in key)
-    
-    # HMAC calculation
-    inner_hash = SHA256(inner_pad + data)
-    outer_hash = SHA256(outer_pad + inner_hash)
-    
-    return outer_hash
-
-function SHA256(data):
-    # SHA256 implementation as specified in RFC 6234
-    # Reference: https://tools.ietf.org/html/rfc6234
-    # In practice, use a cryptographic library
-    # This is a placeholder for the actual SHA256 implementation
-    pass
-```
-
-# Discovery protocol uses Pedersen commitments for zero-knowledge proofs
-# No pre-shared keys are required for the discovery process
-
-function get_discovered_psk(session_id):
-    # Retrieve the PSK that was discovered for this session
-    return session_state.discovered_psk
-
-function store_discovered_psk(session_id, psk):
-    # Store the discovered PSK for this session
-    session_state.discovered_psk = psk
-
-function cleanup_discovery():
-    # Clean up discovery state
-    clear_discovery_timer()
-    clear_discovery_state()
-    session_state.discovery_state = DISCOVERY_IDLE
-    session_state.discovered_psk = None
-    session_state.discovery_id = 0
-    session_state.challenge_nonce = 0
-    session_state.response_nonce = 0
-```
-
-### Discovery Process Algorithm
-```pseudocode
-function initiate_discovery():
-    # Start discovery process on well-known port
-    discovery_id = generate_random_64bit()
-    challenge_nonce = generate_random_64bit()
-    
-    # Generate Pedersen commitment to PSK list
-    psk_commitment, randomness = generate_psk_commitment(local_psk_list, challenge_nonce)
-    
-    discovery_packet = create_discovery_packet(
-        discovery_id = discovery_id,
-        psk_count = len(local_psk_list),
-        challenge_nonce = challenge_nonce,
-        features = supported_features,
-        commitment = psk_commitment
-    )
-    
-    # Store randomness for later verification
-    session_state.discovery_randomness = randomness
-    
-    send_packet(discovery_packet, DISCOVERY_PORT)
-    set_discovery_timer(DISCOVERY_TIMEOUT_MS)
-    transition_to(DISCOVERY_INITIATED)
-
-function handle_discovery_packet(discovery_packet):
-    # Handle incoming discovery packet
-    discovery_id = discovery_packet.discovery_id
-    initiator_psk_count = discovery_packet.psk_count
-    challenge_nonce = discovery_packet.challenge_nonce
-    initiator_features = discovery_packet.initiator_features
-    initiator_commitment = discovery_packet.commitment
-    
-    # Verify Pedersen commitment structure
-    if not verify_psk_commitment(initiator_commitment, challenge_nonce, initiator_psk_count):
-        log_error("Discovery packet commitment verification failed")
-        return
-    
-    # Generate response nonce
-    response_nonce = generate_random_64bit()
-    
-    # Generate Pedersen commitment for our PSK list
-    psk_commitment, randomness = generate_psk_commitment(local_psk_list, challenge_nonce)
-    
-    discovery_response = create_discovery_response_packet(
-        discovery_id = discovery_id,
-        psk_count = len(local_psk_list),
-        challenge_nonce = challenge_nonce,
-        response_nonce = response_nonce,
-        commitment = psk_commitment,
-        features = supported_features
-    )
-    
-    # Store randomness for later verification
-    session_state.discovery_randomness = randomness
-    
-    send_packet(discovery_response, DISCOVERY_PORT)
-    transition_to(DISCOVERY_RESPONDED)
-
-function handle_discovery_response(discovery_response):
-    # Handle discovery response
-    discovery_id = discovery_response.discovery_id
-    responder_psk_count = discovery_response.psk_count
-    challenge_nonce = discovery_response.challenge_nonce
-    response_nonce = discovery_response.response_nonce
-    responder_commitment = discovery_response.commitment
-    responder_features = discovery_response.responder_features
-    
-    # Verify Pedersen commitment structure
-    if not verify_psk_commitment(responder_commitment, challenge_nonce, responder_psk_count):
-        log_error("Discovery response commitment verification failed")
-        transition_to(DISCOVERY_FAILED)
-        return
-    
-    # Find common PSK using secure set intersection
-    common_psk_index = find_common_psk(local_psk_list, responder_psk_count)
-    
-    if common_psk_index == -1:
-        # No common PSK found
-        transition_to(DISCOVERY_FAILED)
-        return
-    
-    # Generate Pedersen commitment for PSK selection
-    selection_commitment, selection_randomness = generate_psk_selection_commitment(
-        common_psk_index, 
-        local_psk_list, 
-        challenge_nonce, 
-        response_nonce
-    )
-    
-    # Generate new session ID
-    session_id = generate_session_id()
-    
-    discovery_confirm = create_discovery_confirm_packet(
-        discovery_id = discovery_id,
-        selected_psk_index = common_psk_index,
-        challenge_nonce = challenge_nonce,
-        response_nonce = response_nonce,
-        commitment = selection_commitment,
-        session_id = session_id
-    )
-    
-    # Store selection randomness for later verification
-    session_state.selection_randomness = selection_randomness
-    
-    send_packet(discovery_confirm, DISCOVERY_PORT)
-    transition_to(DISCOVERY_COMPLETED)
-
-function handle_discovery_confirm(discovery_confirm):
-    # Handle discovery confirmation
-    discovery_id = discovery_confirm.discovery_id
-    selected_psk_index = discovery_confirm.selected_psk_index
-    challenge_nonce = discovery_confirm.challenge_nonce
-    response_nonce = discovery_confirm.response_nonce
-    selection_commitment = discovery_confirm.commitment
-    session_id = discovery_confirm.session_id
-    
-    # Verify Pedersen commitment structure
-    if not verify_psk_commitment(selection_commitment, challenge_nonce, len(local_psk_list)):
-        log_error("Discovery confirm commitment verification failed")
-        transition_to(DISCOVERY_FAILED)
-        return
-    
-    # Verify selection commitment using stored randomness
-    if not verify_psk_selection_commitment(selection_commitment, selected_psk_index, local_psk_list, challenge_nonce, response_nonce, session_state.selection_randomness):
-        transition_to(DISCOVERY_FAILED)
-        return
-    
-    # Store selected PSK and session ID
-    selected_psk = local_psk_list[selected_psk_index]
-    session_state.discovered_psk = selected_psk
-    session_state.session_id = session_id
-    
-    # Start session establishment using selected PSK
-    start_session_establishment(selected_psk, session_id)
-    transition_to(DISCOVERY_IDLE)
-
-function start_session_establishment(selected_psk, session_id):
-    # Begin normal session establishment using discovered PSK
-    # This integrates with the existing SYN/SYN-ACK handshake
-    
-    # Set the selected PSK for this session
-    session_psk = selected_psk
-    current_session_id = session_id
-    
-    # Calculate initial port using selected PSK with delay allowance
-    daily_key = derive_daily_key(selected_psk, get_current_date())
-    available_ports = get_current_port_with_delay_allowance(daily_key, session_id)
-    
-    # Begin connection establishment on calculated ports
-    # Try each port in order to handle transmission delay
-    for port in available_ports:
-        initiate_connection(port, session_id)
-
-### Integration with Existing Session Establishment
-```pseudocode
-function initiate_connection(port, session_id):
-    # Modified connection initiation to use discovered PSK
-    # This replaces the original connect() function
-    
-    # Get the PSK that was discovered during the discovery process
-    discovered_psk = get_discovered_psk(session_id)
-    if not discovered_psk:
-        log_error("No discovered PSK found for session " + session_id)
-        transition_to(ERROR)
-        return
-    
-    # Use the discovered PSK for key derivation
-    daily_key = derive_daily_key(discovered_psk, get_current_date())
-    
-    # Establish initial session key using discovered PSK
-    session_key = establish_session_key_with_psk(discovered_psk, session_id)
-    
-    # Create SYN packet with discovered session ID
-    syn_packet = create_syn_packet(
-        session_id = session_id,
-        sequence_number = INITIAL_SEQUENCE_NUMBER,
-        congestion_window = INITIAL_CONGESTION_WINDOW,
-        receive_window = INITIAL_RECEIVE_WINDOW,
-        time_offset = get_time_offset(),
-        features = negotiated_features
-    )
-    
-    # Calculate HMAC using session key derived from discovered PSK
-    syn_hmac = calculate_packet_hmac(syn_packet, session_key)
-    syn_packet.hmac = syn_hmac
-    
-    # Send SYN packet to calculated port
-    send_packet(syn_packet, port)
-    transition_to(SYN_SENT)
-
-function handle_syn_with_discovery(syn_packet):
-    # Handle SYN packet when PSK was discovered through discovery process
-    session_id = syn_packet.session_id
-    
-    # Get the PSK that was selected during discovery
-    discovered_psk = get_discovered_psk(session_id)
-    if not discovered_psk:
-        log_error("No discovered PSK found for session " + session_id)
-        send_error_packet(session_id, ERROR_SESSION_NOT_FOUND)
-        return
-    
-    # Use the discovered PSK for key derivation
-    daily_key = derive_daily_key(discovered_psk, get_current_date())
-    
-    # Establish initial session key using discovered PSK
-    session_key = establish_session_key_with_psk(discovered_psk, session_id)
-    
-    # Verify HMAC using session key derived from discovered PSK
-    if not verify_packet_hmac(syn_packet, session_key, syn_packet.hmac):
-        send_error_packet(session_id, ERROR_AUTHENTICATION_FAILED)
-        return
-    
-    # Create SYN-ACK packet
-    syn_ack_packet = create_syn_ack_packet(
-        session_id = session_id,
-        sequence_number = generate_sequence_number(),
-        acknowledgment_number = syn_packet.sequence_number + 1,
-        congestion_window = INITIAL_CONGESTION_WINDOW,
-        receive_window = INITIAL_RECEIVE_WINDOW,
-        time_offset = get_time_offset(),
-        features = negotiate_features(syn_packet.features, supported_features)
-    )
-    
-    # Calculate HMAC using session key derived from discovered PSK
-    syn_ack_hmac = calculate_packet_hmac(syn_ack_packet, session_key)
-    syn_ack_packet.hmac = syn_ack_hmac
-    
-    # Send SYN-ACK packet
-    send_packet(syn_ack_packet, syn_packet.source_port)
-    transition_to(SYN_RECEIVED)
-
-### Complete Discovery Workflow
-```pseudocode
-function establish_connection_with_discovery():
-    # Complete workflow: Discovery -> Session Establishment
-    
-    # Step 1: Start discovery process
-    initiate_discovery()
-    
-    # Discovery process runs asynchronously
-    # When discovery completes, start_session_establishment() is called
-    # which then calls initiate_connection() to begin normal session establishment
-
-function handle_discovery_timeout():
-    # Handle discovery timeout
-    if discovery_retry_count < DISCOVERY_RETRY_COUNT:
-        discovery_retry_count += 1
-        initiate_discovery()  # Retry discovery
-    else:
-        transition_to(DISCOVERY_FAILED)
-        log_error("Discovery failed after " + DISCOVERY_RETRY_COUNT + " attempts")
-
-function handle_discovery_error(error_code):
-    # Handle discovery errors
-    switch error_code:
-        case ERROR_DISCOVERY_FAILED:
-            log_error("Discovery process failed")
-            transition_to(DISCOVERY_FAILED)
-            
-        case ERROR_PSK_NOT_FOUND:
-            log_error("No common PSK found between peers")
-            transition_to(DISCOVERY_FAILED)
-            
-        case ERROR_ZERO_KNOWLEDGE_PROOF_FAILED:
-            log_error("Commitment verification failed")
-            transition_to(DISCOVERY_FAILED)
-            
-        case ERROR_DISCOVERY_TIMEOUT:
-            log_error("Discovery process timed out")
-            handle_discovery_timeout()
-
-# Integration with existing connection establishment
-function connect_with_discovery(remote_address):
-    # Enhanced connect function that includes discovery
-    # This replaces the original connect() function
-    
-    # Start discovery process
-    establish_connection_with_discovery()
-    
-    # Discovery will automatically trigger session establishment
-    # when a common PSK is found
-
-function listen_with_discovery():
-    # Enhanced listen function that handles discovery
-    # This replaces the original listen() function
-    
-    # Listen on well-known discovery port
-    bind_socket(DISCOVERY_PORT)
-    
-    # Also listen on ephemeral ports for normal communication
-    # after discovery completes
-
-### Complete Discovery Workflow Summary
-
-The discovery process uses a truly zero-knowledge approach that requires no pre-shared keys or secret material exchange. Instead, it relies on cryptographic commitments and zero-knowledge proofs to establish trust and find common PSKs.
-
-**Discovery Phase (Uses Cryptographic Commitments):**
-1. **Discovery Initiation**: Client sends DISCOVERY packet with commitment using challenge nonce
-2. **Discovery Response**: Server responds with DISCOVERY_RESPONSE packet with commitment using response nonce
-3. **Discovery Confirmation**: Client sends DISCOVERY_CONFIRM packet with commitment using both nonces
-4. **PSK Selection**: Both parties agree on a common PSK through zero-knowledge proof
-
-**Session Establishment Phase (Uses Discovered PSK):**
-1. **Session Key Derivation**: Both parties derive session keys from the discovered PSK
-2. **Connection Establishment**: Normal SYN/SYN-ACK handshake using session keys
-3. **Data Communication**: All subsequent packets use session keys derived from discovered PSK
-
-**Key Benefits:**
-- **No Pre-shared Keys**: Discovery uses cryptographic commitments, not shared secrets
-- **Zero-Knowledge**: No secret material is exchanged during discovery
-- **Trust Establishment**: Trust is established through cryptographic proofs
-- **PSK Protection**: PSK discovery prevents enumeration of available PSKs
-- **Seamless Integration**: Discovery automatically transitions to normal session establishment
-
-```
-```
+// Core state transitions with automatic recovery
+CLOSED -> CONNECTING: connect() [Start connection with discovery if needed]
+CLOSED -> LISTENING: bind() [Start listening for connections]
+
+CONNECTING -> ESTABLISHED: connection_established() [Normal connection]
+CONNECTING -> CLOSED: connection_failed() [Connection failed after retries]
+CONNECTING -> RECOVERING: connection_recovery_needed() [Recovery required]
+
+LISTENING -> ESTABLISHED: connection_established() [Normal connection]
+LISTENING -> CLOSED: timeout() or error [Listen timeout or error]
+
+ESTABLISHED -> CLOSING: close_requested() [Normal close]
+ESTABLISHED -> RECOVERING: recovery_triggered() [Recovery needed]
+ESTABLISHED -> ERROR: critical_error() [Critical error]
+
+CLOSING -> CLOSED: close_completed() [Normal close completion]
+CLOSING -> RECOVERING: close_recovery_needed() [Close recovery needed]
+
+RECOVERING -> ESTABLISHED: recovery_success() [Recovery successful]
+RECOVERING -> CLOSED: recovery_failed() [Recovery failed after attempts]
+RECOVERING -> ERROR: recovery_critical_failure() [Critical recovery failure]
+
+ERROR -> CLOSED: cleanup() [Immediate cleanup]
+
+// Recovery sub-state transitions (within main states)
+NORMAL -> RESYNC: time_drift_detected() [Time synchronization needed]
+NORMAL -> REKEY: key_rotation_needed() [Session key rotation needed]
+NORMAL -> REPAIR: sequence_mismatch() [Sequence number repair needed]
+NORMAL -> EMERGENCY: critical_failure() [Emergency recovery needed]
+
+RESYNC -> NORMAL: time_sync_completed() [Time sync successful]
+REKEY -> NORMAL: key_rotation_completed() [Key rotation successful]
+REPAIR -> NORMAL: sequence_repair_completed() [Sequence repair successful]
+EMERGENCY -> NORMAL: emergency_recovery_completed() [Emergency recovery successful]
 ```
 
 ### Invalid State Packet Handling
@@ -1456,24 +908,13 @@ function handle_packet_in_invalid_state(packet, current_state):
                 send_rst_packet(packet.session_id)
                 return ERROR_STATE_INVALID
                 
-        case SYN_SENT:
+        case CONNECTING:
             if packet.type == PACKET_TYPE_SYN:
                 # Simultaneous open
                 send_syn_ack_packet(packet.session_id)
                 return SUCCESS
             elif packet.type == PACKET_TYPE_SYN_ACK:
-                return handle_syn_ack_in_syn_sent_state(packet)
-            else:
-                send_rst_packet(packet.session_id)
-                return ERROR_STATE_INVALID
-                
-        case SYN_RECEIVED:
-            if packet.type == PACKET_TYPE_SYN:
-                # Resend SYN-ACK
-                send_syn_ack_packet(packet.session_id)
-                return SUCCESS
-            elif packet.type == PACKET_TYPE_ACK:
-                return handle_ack_in_syn_received_state(packet)
+                return handle_syn_ack_in_connecting_state(packet)
             else:
                 send_rst_packet(packet.session_id)
                 return ERROR_STATE_INVALID
@@ -1530,13 +971,13 @@ function sequence_difference(seq1, seq2):
 ```pseudocode
 function calculate_packet_hmac(packet_data, session_key):
     # HMAC is calculated over all packet fields except the HMAC field itself
-    # The HMAC field is always the last 32 bytes of the packet (SHA256)
+    # The HMAC field is always the last 16 bytes of the packet (HMAC-SHA256-128)
     
     # Extract packet without HMAC
-    packet_without_hmac = packet_data[0:len(packet_data)-32]
+    packet_without_hmac = packet_data[0:len(packet_data)-16]
     
-    # Calculate HMAC-SHA256 using session key
-    hmac_result = HMAC_SHA256(session_key, packet_without_hmac)
+    # Calculate HMAC-SHA256-128 using session key
+    hmac_result = HMAC_SHA256_128(session_key, packet_without_hmac)
     
     return hmac_result
 
@@ -1557,6 +998,115 @@ function constant_time_compare(a, b):
         result |= a[i] ^ b[i]
     
     return result == 0
+
+## Session Key Derivation Specification
+
+
+### HKDF-SHA256 Key Derivation Algorithm
+```pseudocode
+function derive_session_key(daily_key, session_id, nonce):
+    # Derive session key using HKDF-SHA256 (RFC 5869)
+    # Input key material (IKM): Daily key (derived from PSK and current date)
+    # Salt: Session ID for context separation
+    # Info: Nonce for additional entropy
+    
+    # Convert inputs to bytes
+    daily_key_bytes = daily_key if isinstance(daily_key, bytes) else daily_key
+    session_id_bytes = uint64_to_bytes(session_id)
+    nonce_bytes = nonce if isinstance(nonce, bytes) else nonce.encode('utf-8')
+    
+    # HKDF-SHA256 Extract phase
+    # PRK = HMAC-SHA256(salt, IKM)
+    salt = session_id_bytes
+    ikm = daily_key_bytes
+    prk = HMAC_SHA256(salt, ikm)
+    
+    # HKDF-SHA256 Expand phase
+    # OKM = HKDF-Expand(PRK, info, L)
+    info = b"session_key" + nonce_bytes
+    l = 32  # 256-bit session key
+    
+    # Expand using HMAC-SHA256
+    session_key = hkdf_expand_sha256(prk, info, l)
+    
+    return session_key
+
+function hkdf_expand_sha256(prk, info, l):
+    # HKDF-Expand implementation using HMAC-SHA256
+    # Based on RFC 5869 Section 2.3
+    
+    if l > 255 * 32:  # SHA256 output is 32 bytes
+        raise ValueError("Requested key length too large")
+    
+    # Initialize
+    t = b""
+    okm = b""
+    counter = 1
+    
+    while len(okm) < l:
+        # T(i) = HMAC-SHA256(PRK, T(i-1) || info || counter)
+        t = HMAC_SHA256(prk, t + info + bytes([counter]))
+        okm += t
+        counter += 1
+    
+    return okm[:l]
+
+function derive_daily_key(psk, date_string):
+    # Derive daily key for port calculation and session key derivation using HKDF-SHA256
+    # This provides key separation between session keys and port calculation
+    # Daily key is derived from PSK and current UTC date (YYYY-MM-DD format)
+    
+    psk_bytes = psk if isinstance(psk, bytes) else psk.encode('utf-8')
+    date_bytes = date_string.encode('utf-8')
+    
+    # HKDF-SHA256 Extract
+    salt = b"daily_key_salt"
+    ikm = psk_bytes
+    prk = HMAC_SHA256(salt, ikm)
+    
+    # HKDF-SHA256 Expand
+    info = b"daily_key" + date_bytes
+    l = 32  # 256-bit daily key
+    
+    daily_key = hkdf_expand_sha256(prk, info, l)
+    
+    return daily_key
+
+function derive_daily_key_for_current_date(psk):
+    # Convenience function to derive daily key for current UTC date
+    current_date = get_current_utc_date()
+    return derive_daily_key(psk, current_date)
+
+function initialize_session_keys(psk, session_id, nonce):
+    # Initialize session keys using daily key derivation
+    # This ensures all session keys are derived from the daily key, not directly from PSK
+    
+    # Step 1: Derive daily key from PSK and current UTC date
+    daily_key = derive_daily_key_for_current_date(psk)
+    
+    # Step 2: Derive session key from daily key
+    session_key = derive_session_key(daily_key, session_id, nonce)
+    
+    return {
+        'daily_key': daily_key,
+        'session_key': session_key
+    }
+
+function rekey_session_keys(psk, session_id, new_nonce):
+    # Rekey session keys using current daily key
+    # This maintains the daily key but generates a new session key
+    
+    # Get current daily key (or derive if not available)
+    daily_key = derive_daily_key_for_current_date(psk)
+    
+    # Derive new session key from daily key
+    new_session_key = derive_session_key(daily_key, session_id, new_nonce)
+    
+    return {
+        'daily_key': daily_key,
+        'session_key': new_session_key
+    }
+```
 ```
 
 ## Port Calculation Specification
@@ -1754,7 +1304,7 @@ function reset_rto():
     rtt_rto = RTT_INITIAL_MS
 ```
 
-## Flow Control Specification (RFC 793)
+## Flow Control Specification
 
 ### Complete Flow Control Algorithm
 ```pseudocode
@@ -2315,310 +1865,3 @@ function handle_malformed_packet(packet_data, error_reason):
     # Log the error
     log_error("Malformed packet: " + error_reason)
 ```
-
-## Security Parameter Specifications
-
-### Enhanced Key Management with Session Key Derivation
-```pseudocode
-// Key derivation parameters
-MASTER_PSK_LENGTH = 32                   // Master PSK length in bytes
-DAY_KEY_LENGTH = 32                      // Day key length in bytes
-DAILY_KEY_LENGTH = 32                    // Derived daily key length
-HMAC_KEY_LENGTH = 32                     // HMAC key length
-SESSION_KEY_LENGTH = 32                  // Session key length
-
-// Key rotation schedule
-DAY_KEY_ROTATION_INTERVAL = 86400000     // 24 hours in milliseconds
-KEY_PRE_ROTATION_TIME = 3600000          // 1 hour before rotation
-SESSION_KEY_ROTATION_INTERVAL = 300000   // 5 minutes session key rotation
-
-// Session key derivation using RFC 5869 HKDF
-function derive_daily_key(master_psk, day_key, current_date):
-    salt = day_key
-    ikm = master_psk || current_date
-    info = "FHOP-DAILY-KEY" || current_date
-    return HKDF_SHA256(salt, ikm, info, DAILY_KEY_LENGTH)
-
-function derive_session_key(daily_key, session_id, current_time):
-    # Derive session-specific key using time-based entropy
-    # Follows RFC 5869 HKDF specification
-    
-    # Generate time-based entropy for session key
-    time_entropy = generate_time_based_entropy(current_time)
-    
-    # Use HKDF for key derivation
-    salt = daily_key
-    ikm = time_entropy || session_id
-    info = "FHOP-SESSION-KEY" || session_id
-    return HKDF_SHA256(salt, ikm, info, SESSION_KEY_LENGTH)
-
-function generate_time_based_entropy(current_time):
-    # Generate entropy based on current time window
-    # Uses 5-minute windows for session key rotation
-    # Based on UTC time from start of current day
-    utc_time_ms = get_utc_time_milliseconds()
-    time_from_day_start = utc_time_ms % (24 * 60 * 60 * 1000)  # Milliseconds since start of day
-    time_window = time_from_day_start // SESSION_KEY_ROTATION_INTERVAL
-    
-    # Convert time window to bytes
-    time_window_bytes = time_window.to_bytes(8, byteorder='big')
-    
-    # Generate entropy using HMAC with daily key
-    entropy = HMAC_SHA256(daily_key, time_window_bytes)
-    
-    return entropy
-
-function rotate_session_key():
-    # Rotate session key every 5 minutes
-    # Based on UTC time from start of current day
-    utc_time_ms = get_utc_time_milliseconds()
-    time_from_day_start = utc_time_ms % (24 * 60 * 60 * 1000)  # Milliseconds since start of day
-    new_session_key = derive_session_key(daily_key, session_id, time_from_day_start)
-    
-    # Update session state
-    current_session_key = new_session_key
-    current_session_key_generation_time = (time_from_day_start // SESSION_KEY_ROTATION_INTERVAL) * SESSION_KEY_ROTATION_INTERVAL
-    
-    # Schedule next rotation
-    schedule_session_key_rotation(time_from_day_start + SESSION_KEY_ROTATION_INTERVAL)
-
-function schedule_session_key_rotation(next_rotation_time):
-    # Schedule next session key rotation
-    rotation_timer = next_rotation_time - get_current_time()
-    if rotation_timer > 0:
-        schedule_timer(rotation_timer, rotate_session_key)
-
-// Enhanced HMAC calculation with session keys
-function calculate_packet_hmac(packet_data, session_key):
-    hmac_input = packet_data[0:len(packet_data)-32]  // Exclude HMAC field
-    return HMAC_SHA256(session_key, hmac_input)
-
-// Session key management during connection establishment
-function establish_session_key(session_id):
-    # Establish initial session key during connection setup
-    # Based on UTC time from start of current day
-    utc_time_ms = get_utc_time_milliseconds()
-    time_from_day_start = utc_time_ms % (24 * 60 * 60 * 1000)  # Milliseconds since start of day
-    session_key = derive_session_key(daily_key, session_id, time_from_day_start)
-    
-    # Store session key and generation time
-    current_session_key = session_key
-    current_session_key_generation_time = (time_from_day_start // SESSION_KEY_ROTATION_INTERVAL) * SESSION_KEY_ROTATION_INTERVAL
-    
-    # Schedule first rotation
-    schedule_session_key_rotation(time_from_day_start + SESSION_KEY_ROTATION_INTERVAL)
-    
-    return session_key
-
-function establish_session_key_with_psk(psk, session_id):
-    # Establish session key using a specific PSK (for discovered PSKs)
-    # Based on UTC time from start of current day
-    utc_time_ms = get_utc_time_milliseconds()
-    time_from_day_start = utc_time_ms % (24 * 60 * 60 * 1000)  # Milliseconds since start of day
-    
-    # Derive daily key from the specific PSK
-    daily_key = derive_daily_key(psk, get_current_date())
-    
-    # Derive session key using the daily key
-    session_key = derive_session_key(daily_key, session_id, time_from_day_start)
-    
-    # Store session key and generation time
-    current_session_key = session_key
-    current_session_key_generation_time = (time_from_day_start // SESSION_KEY_ROTATION_INTERVAL) * SESSION_KEY_ROTATION_INTERVAL
-    
-    # Schedule first rotation
-    schedule_session_key_rotation(time_from_day_start + SESSION_KEY_ROTATION_INTERVAL)
-    
-    return session_key
-
-function get_current_session_key():
-    # Get current session key, rotating if necessary
-    # Based on UTC time from start of current day
-    utc_time_ms = get_utc_time_milliseconds()
-    time_from_day_start = utc_time_ms % (24 * 60 * 60 * 1000)  # Milliseconds since start of day
-    expected_rotation_time = (time_from_day_start // SESSION_KEY_ROTATION_INTERVAL) * SESSION_KEY_ROTATION_INTERVAL
-    
-    if current_session_key_generation_time != expected_rotation_time:
-        # Session key needs rotation
-        rotate_session_key()
-    
-    return current_session_key
-```
-
-### Anti-Replay Protection
-```pseudocode
-// Replay protection parameters
-REPLAY_WINDOW_SIZE = 1000                // Number of recent timestamps to track
-REPLAY_WINDOW_TIME_MS = 30000            // Time window for replay detection
-
-// Timestamp validation
-function validate_packet_timestamp(packet_timestamp, current_time):
-    time_difference = abs(current_time - packet_timestamp)
-    
-    if time_difference > TIMESTAMP_WINDOW_MS:
-        return ERROR_TIMESTAMP_INVALID
-    
-    if packet_timestamp in recent_timestamps:
-        return ERROR_REPLAY_ATTACK
-    
-    add_to_recent_timestamps(packet_timestamp)
-    return SUCCESS
-
-function add_to_recent_timestamps(timestamp):
-    # Add timestamp to sliding window
-    recent_timestamps.add(timestamp)
-    
-    # Remove old timestamps
-    current_time = get_current_time()
-    expired_timestamps = []
-    
-    for ts in recent_timestamps:
-        if current_time - ts > REPLAY_WINDOW_TIME_MS:
-            expired_timestamps.append(ts)
-    
-    for ts in expired_timestamps:
-        recent_timestamps.remove(ts)
-```
-
-### PSK Enumeration Prevention
-```pseudocode
-// PSK enumeration prevention parameters
-MAX_PSK_DISCOVERY_ATTEMPTS = 5          // Maximum discovery attempts per peer
-PSK_DISCOVERY_RATE_LIMIT_MS = 60000     // Rate limit for discovery attempts (1 minute)
-ENUMERATION_DETECTION_THRESHOLD = 10     // Threshold for detecting enumeration attempts
-
-// PSK enumeration detection
-function detect_psk_enumeration_attempt(peer_address, discovery_attempts):
-    # Track discovery attempts per peer
-    if peer_address not in discovery_attempts:
-        discovery_attempts[peer_address] = {
-            'count': 0,
-            'first_attempt': get_current_time(),
-            'last_attempt': get_current_time()
-        }
-    
-    attempts = discovery_attempts[peer_address]
-    attempts['count'] += 1
-    attempts['last_attempt'] = get_current_time()
-    
-    # Check for enumeration patterns
-    if attempts['count'] > MAX_PSK_DISCOVERY_ATTEMPTS:
-        return ERROR_PSK_ENUMERATION_ATTEMPT
-    
-    # Check rate limiting
-    time_since_first = get_current_time() - attempts['first_attempt']
-    if time_since_first < PSK_DISCOVERY_RATE_LIMIT_MS:
-        if attempts['count'] > ENUMERATION_DETECTION_THRESHOLD:
-            return ERROR_PSK_ENUMERATION_ATTEMPT
-    
-    return SUCCESS
-
-function handle_enumeration_attempt(peer_address):
-    # Block peer for extended period
-    block_peer(peer_address, BLOCK_DURATION_MS)
-    
-    # Log enumeration attempt
-    log_security_event("PSK enumeration attempt detected from " + peer_address)
-    
-    # Send error response
-    send_error_packet(ERROR_PSK_ENUMERATION_ATTEMPT, "Enumeration attempt detected")
-```
-
-### Session ID Generation
-```pseudocode
-function generate_session_id():
-    # Generate cryptographically secure random session ID
-    random_bytes = secure_random_bytes(8)
-    session_id = bytes_to_uint64(random_bytes)
-    
-    # Ensure session ID is not zero
-    if session_id == 0:
-        session_id = 1
-    
-    return session_id
-
-```
-
-## Configuration Parameters
-
-### Negotiable Parameters
-```pseudocode
-// Parameters that can be negotiated during handshake
-NEGOTIABLE_PARAMETERS = {
-    'hop_interval_ms': {
-        'default': 250,
-        'min': 100,
-        'max': 1000,
-        'description': 'Port hop interval in milliseconds'
-    },
-    'heartbeat_interval_ms': {
-        'default': 30000,
-        'min': 10000,
-        'max': 60000,
-        'description': 'Heartbeat interval in milliseconds'
-    },
-    'initial_congestion_window': {
-        'default': 1460,
-        'min': 292,
-        'max': 65535,
-        'description': 'Initial congestion window size in bytes'
-    },
-    'initial_receive_window': {
-        'default': 65535,
-        'min': 1024,
-        'max': 65535,
-        'description': 'Initial receive window size in bytes'
-    },
-    'max_retransmission_attempts': {
-        'default': 8,
-        'min': 3,
-        'max': 15,
-        'description': 'Maximum retransmission attempts'
-    },
-    'ack_delay_ms': {
-        'default': 50,
-        'min': 10,
-        'max': 200,
-        'description': 'ACK delay for batching in milliseconds'
-    }
-}
-```
-
-### Parameter Validation
-```pseudocode
-function validate_negotiated_parameters(parameters):
-    for param_name, param_value in parameters.items():
-        if param_name not in NEGOTIABLE_PARAMETERS:
-            return ERROR_INVALID_PARAMETER
-        
-        param_config = NEGOTIABLE_PARAMETERS[param_name]
-        
-        if param_value < param_config['min'] or param_value > param_config['max']:
-            return ERROR_INVALID_PARAMETER
-    
-    return SUCCESS
-```
-
-### Feature Negotiation
-```pseudocode
-// Supported features bitmap
-FEATURE_SACK = 0x00000001               // Selective ACK support
-FEATURE_WINDOW_SCALING = 0x00000002     // Window scaling support
-FEATURE_TIMESTAMP = 0x00000004          // Timestamp option support
-FEATURE_FRAGMENTATION = 0x00000008      // Packet fragmentation support
-FEATURE_COMPRESSION = 0x00000010        // Data compression support
-FEATURE_ENCRYPTION = 0x00000020         // Data encryption support
-
-function negotiate_features(client_features, server_features):
-    # Intersection of supported features
-    negotiated_features = client_features & server_features
-    
-    # Ensure required features are present
-    required_features = FEATURE_SACK | FEATURE_TIMESTAMP
-    if (negotiated_features & required_features) != required_features:
-        return ERROR_INVALID_PARAMETER
-    
-    return negotiated_features
-```
-
-
