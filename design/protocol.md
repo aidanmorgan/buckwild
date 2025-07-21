@@ -16,13 +16,22 @@ HEARTBEAT_TIMEOUT_MS = 90000             // Heartbeat timeout (90 seconds)
 MAX_PACKET_LIFETIME_MS = 60000           // Maximum packet age (60 seconds)
 TIMESTAMP_WINDOW_MS = 30000              // Anti-replay timestamp window
 SAFETY_MARGIN_MS = 100                   // Safety margin for delay calculations
-TRANSMISSION_DELAY_ALLOWANCE_MS = 50     // Allowance for network transmission delay
+BASE_TRANSMISSION_DELAY_ALLOWANCE_MS = 1000 // Base allowance for network transmission delay
+ADAPTIVE_DELAY_WINDOW_MIN = 1            // Minimum delay window size (time windows)
+ADAPTIVE_DELAY_WINDOW_MAX = 16           // Maximum delay window size (time windows)
+DELAY_MEASUREMENT_SAMPLES = 10           // Number of samples for delay measurement
+DELAY_NEGOTIATION_INTERVAL_MS = 60000    // Delay parameters negotiation interval (1 minute)
+DELAY_PERCENTILE_TARGET = 95             // Target percentile for delay allowance (95th percentile)
+BASE_HEARTBEAT_PAYLOAD_SIZE = 8          // Size of base heartbeat payload (bytes)
 MILLISECONDS_PER_DAY = 86400000          // Milliseconds in a day (for timestamp calculation)
 
 // Sequence and window constants
-INITIAL_SEQUENCE_NUMBER = 0x12345678     // Initial sequence number
+SEQUENCE_NEGOTIATION_TIMEOUT_MS = 10000  // Sequence number negotiation timeout
+SEQUENCE_COMMITMENT_SIZE = 32            // Size of sequence number commitment in bytes
+SEQUENCE_NONCE_SIZE = 16                 // Size of sequence negotiation nonce in bytes
 MAX_SEQUENCE_NUMBER = 0xFFFFFFFF         // Maximum sequence number
 SEQUENCE_WRAP_THRESHOLD = 0x80000000     // Threshold for sequence wraparound
+SEQUENCE_WINDOW_SIZE = 1000              // Sequence number acceptance window
 INITIAL_CONGESTION_WINDOW = 1460         // Initial congestion window (bytes)
 MIN_CONGESTION_WINDOW = 292              // Minimum congestion window (bytes)
 MAX_CONGESTION_WINDOW = 65535            // Maximum congestion window (bytes)
@@ -62,6 +71,8 @@ MAX_SYNC_FAILURES = 3                    // Maximum sync failures before emergen
 MIN_PORT = 1024                          // Minimum port (expanded range)
 MAX_PORT = 65535                         // Maximum port
 PORT_RANGE = 64512                       // Available port range (65535-1024+1)
+PORT_OFFSET_RANGE = 16128                // Port offset range (PORT_RANGE / 4)
+MAX_CONNECTION_OFFSET = 4095             // Maximum offset value (12-bit)
 DISCOVERY_PORT = 1025                   // Well-known port for discovery process
 DEFAULT_MTU = 1500                       // Default MTU size
 FRAGMENTATION_THRESHOLD = 1400           // Size threshold for fragmentation
@@ -92,6 +103,29 @@ PSK_ID_LENGTH = 32                      // Length of PSK identifier
 FRAGMENT_TIMEOUT_MS = 30000             // Fragment reassembly timeout (30 seconds)
 BLOCK_DURATION_MS = 300000              // Block duration for enumeration attempts (5 minutes)
 REPLAY_THRESHOLD = 5                    // Threshold for replay attack detection
+
+// Recovery timeout constants
+RECOVERY_TIMEOUT_MS = 15000             // Recovery process timeout (15 seconds)
+RECOVERY_RETRY_INTERVAL_MS = 2000       // Interval between recovery attempts
+RECOVERY_MAX_ATTEMPTS = 3               // Maximum recovery attempts before failure
+TIME_RESYNC_TIMEOUT_MS = 5000           // Time resynchronization timeout
+SEQUENCE_REPAIR_TIMEOUT_MS = 8000       // Sequence repair timeout
+EMERGENCY_RECOVERY_TIMEOUT_MS = 30000   // Emergency recovery timeout
+REKEY_TIMEOUT_MS = 10000                // Session rekey timeout
+
+// Fragmentation constants
+MAX_FRAGMENT_SIZE = 1400                // Maximum fragment payload size (bytes)
+FRAGMENT_REASSEMBLY_BUFFER_SIZE = 64    // Maximum fragments in reassembly buffer
+FRAGMENT_ID_SPACE = 0xFFFF              // Fragment ID space (16-bit)
+FRAGMENT_DUPLICATE_WINDOW = 100         // Window for detecting duplicate fragments
+
+// Flow control constants
+INITIAL_SEND_WINDOW = 8192              // Initial send window size (bytes)
+INITIAL_RECEIVE_WINDOW = 16384          // Initial receive window size (bytes)
+WINDOW_SCALE_FACTOR = 1                 // Window scaling factor
+WINDOW_UPDATE_THRESHOLD = 0.5           // Threshold for sending window updates (fraction)
+ZERO_WINDOW_PROBE_INTERVAL_MS = 5000    // Zero window probe interval
+WINDOW_TIMEOUT_MS = 60000               // Window timeout for flow control
 
 // Discovery states
 DISCOVERY_IDLE = 0                      // No discovery in progress
@@ -214,7 +248,7 @@ SYN Packet Structure (Big-Endian):
 |         Common Header             |
 |           (64 bytes)             |
 +-----------------------------------+
-|    Initial Sequence Number       |
+|   Sequence Commitment (32-bit)   |
 +-----------------------------------+
 | Initial Congestion|Initial Receive|
 |     Window        |    Window     |
@@ -223,16 +257,19 @@ SYN Packet Structure (Big-Endian):
 +-----------------------------------+
 |    Supported Features (16-bit)   |
 +-----------------------------------+
+|   Sequence Nonce (16-bit)        |
++-----------------------------------+
 
 Field Definitions:
 - Common Header (64 bytes): Standard header with SYN flag set
-- Initial Sequence Number (32-bit): Client's initial sequence number (4 bytes)
+- Sequence Commitment (32-bit): Zero-knowledge commitment to initial sequence number (4 bytes)
 - Initial Congestion Window (16-bit): Initial congestion window size (2 bytes)
 - Initial Receive Window (16-bit): Initial receive window size (2 bytes)
 - Time Offset (32-bit): Client's time offset from epoch (4 bytes)
 - Supported Features (16-bit): Bitmap of supported features (2 bytes)
+- Sequence Nonce (16-bit): Nonce for sequence number commitment (2 bytes)
 
-Total SYN Packet Size: 64 + 16 = 80 bytes
+Total SYN Packet Size: 64 + 18 = 82 bytes
 ```
 ```
 
@@ -243,9 +280,9 @@ SYN-ACK Packet Structure (Big-Endian):
 |         Common Header             |
 |           (64 bytes)             |
 +-----------------------------------+
-|    Initial Sequence Number       |
+|   Sequence Commitment (32-bit)   |
 +-----------------------------------+
-|    Acknowledgment Number         |
+|   Sequence Proof (32-bit)        |
 +-----------------------------------+
 | Initial Congestion|Initial Receive|
 |     Window        |    Window     |
@@ -254,17 +291,20 @@ SYN-ACK Packet Structure (Big-Endian):
 +-----------------------------------+
 |   Negotiated Features (16-bit)   |
 +-----------------------------------+
+|   Sequence Nonce (16-bit)        |
++-----------------------------------+
 
 Field Definitions:
 - Common Header (64 bytes): Standard header with SYN and ACK flags set
-- Initial Sequence Number (32-bit): Server's initial sequence number (4 bytes)
-- Acknowledgment Number (32-bit): Client's sequence + 1 (4 bytes)
+- Sequence Commitment (32-bit): Zero-knowledge commitment to server's initial sequence number (4 bytes)
+- Sequence Proof (32-bit): Zero-knowledge proof validating client's sequence commitment (4 bytes)
 - Initial Congestion Window (16-bit): Initial congestion window size (2 bytes)
 - Initial Receive Window (16-bit): Initial receive window size (2 bytes)
 - Time Offset (32-bit): Server's time offset from epoch (4 bytes)
 - Negotiated Features (16-bit): Final feature bitmap (2 bytes)
+- Sequence Nonce (16-bit): Nonce for server's sequence number commitment (2 bytes)
 
-Total SYN-ACK Packet Size: 64 + 20 = 84 bytes
+Total SYN-ACK Packet Size: 64 + 22 = 86 bytes
 ```
 ```
 
@@ -330,7 +370,7 @@ Total FIN Packet Size: 64 + 4 = 68 bytes
 
 #### HEARTBEAT Packet (Type 0x06)
 ```pseudocode
-HEARTBEAT Packet Structure (Big-Endian):
+Enhanced HEARTBEAT Packet Structure (Big-Endian):
 +-----------------------------------+
 |         Common Header             |
 |           (64 bytes)             |
@@ -340,6 +380,10 @@ HEARTBEAT Packet Structure (Big-Endian):
 |    Time Drift     |Sync State|Res|
 |     (16-bit)      | (8-bit) |(8)|
 +-------------------+---------+----+
+|      Delay Negotiation Data      |
+|           (8 bytes)              |
+|                                 |
++-----------------------------------+
 
 Field Definitions:
 - Common Header (64 bytes): Standard header with ACK flag set
@@ -347,8 +391,17 @@ Field Definitions:
 - Time Drift (16-bit): Calculated time drift
 - Sync State (8-bit): Current synchronization state
 - Reserved (8-bit): Always 0x00
+- Delay Negotiation Data (64-bit): Compact delay adaptation parameters
+  - Bits 0-7: Current delay window (1-16 time windows)
+  - Bits 8-19: Network jitter (0-4095ms)
+  - Bits 20-29: Packet loss rate (0-1023 per-mille)
+  - Bits 30-37: Measurement sample count (0-255)
+  - Bits 38-47: Negotiation sequence (rolling counter)
+  - Bit 48: Adaptation enabled flag
+  - Bits 49-63: Reserved for future use
 
-Total HEARTBEAT Packet Size: 64 + 8 = 72 bytes
+Base HEARTBEAT Packet Size: 64 + 8 = 72 bytes
+Enhanced HEARTBEAT Packet Size: 64 + 16 = 80 bytes
 ```
 
 #### RECOVERY Packet (Type 0x07)
@@ -466,6 +519,35 @@ Field Definitions:
 - Reserved (24-bit): Always 0x000000
 
 Total RST Packet Size: 64 + 4 = 68 bytes
+```
+
+#### SEQUENCE_NEG Packet (Type 0x17)
+```pseudocode
+SEQUENCE_NEG Packet Structure (Big-Endian):
++-----------------------------------+
+|         Common Header             |
+|           (64 bytes)             |
++-----------------------------------+
+|   Negotiation Phase (8-bit)      |
++-----------------------------------+
+|   Sequence Commitment (32-bit)   |
++-----------------------------------+
+|   Sequence Proof (32-bit)        |
++-----------------------------------+
+|   Challenge Nonce (32-bit)       |
++-----------------------------------+
+|        Reserved (24-bit)         |
++-----------------------------------+
+
+Field Definitions:
+- Common Header (64 bytes): Standard header with SYN flag set
+- Negotiation Phase (8-bit): Phase of sequence negotiation (COMMIT=1, REVEAL=2, CONFIRM=3)
+- Sequence Commitment (32-bit): Zero-knowledge commitment to sequence number (4 bytes)
+- Sequence Proof (32-bit): Zero-knowledge proof for sequence validation (4 bytes)
+- Challenge Nonce (32-bit): Challenge nonce for commitment verification (4 bytes)
+- Reserved (24-bit): Always 0x000000 (3 bytes)
+
+Total SEQUENCE_NEG Packet Size: 64 + 16 = 80 bytes
 ```
 
 #### DISCOVERY Packet (Type 0x0C)
@@ -586,6 +668,7 @@ PACKET_TYPE_REPAIR_REQUEST = 0x13       // Sequence repair request
 PACKET_TYPE_REPAIR_RESPONSE = 0x14      // Sequence repair response
 PACKET_TYPE_EMERGENCY_REQUEST = 0x15    // Emergency recovery request
 PACKET_TYPE_EMERGENCY_RESPONSE = 0x16   // Emergency recovery response
+PACKET_TYPE_SEQUENCE_NEG = 0x17         // Sequence number negotiation
 
 // Time synchronization packet structure
 TIME_SYNC_REQUEST Packet Structure (Big-Endian):
@@ -1128,79 +1211,446 @@ function rekey_session_keys(psk, session_id, new_nonce):
 # - Port will be calculated using this window number
 ```
 
-### Port Calculation Algorithm
+### Connection Offset Derivation for Multiple Parallel Connections
+
 ```pseudocode
-function calculate_port(daily_key, session_id, time_window, entropy):
-    # Calculate port based on time window, session ID, and entropy
-    # Time window is 250ms wide based on UTC time from start of day
+function derive_connection_offset(daily_key, src_endpoint, dst_endpoint, connection_id):
+    # Derive unique port offset for each connection between same endpoints
+    # This prevents port collisions when multiple connections exist between same hosts
+    # The offset is derived cryptographically and never transmitted
+    
+    # Create connection-specific context for HKDF domain separation
+    src_bytes = endpoint_to_bytes(src_endpoint)  # IP:port as bytes
+    dst_bytes = endpoint_to_bytes(dst_endpoint)  # IP:port as bytes
+    conn_id_bytes = uint64_to_bytes(connection_id)
+    
+    # HKDF domain separation using connection-specific info
+    # This ensures different connections get different offsets
+    connection_context = src_bytes || dst_bytes || conn_id_bytes
+    
+    # Use HKDF-Extract with daily key as input key material
+    salt = b"connection_offset_salt"
+    prk = HMAC_SHA256(salt, daily_key)
+    
+    # Use HKDF-Expand with connection context for domain separation
+    info = b"port_offset" || connection_context
+    offset_material = hkdf_expand_sha256(prk, info, 4)  # 4 bytes for offset
+    
+    # Extract 12-bit offset value (0-4095)
+    offset_value = (offset_material[0] << 4) | (offset_material[1] >> 4)
+    connection_offset = offset_value & 0x0FFF  # Mask to 12 bits
+    
+    return connection_offset
+
+function endpoint_to_bytes(endpoint):
+    # Convert IP:port endpoint to canonical byte representation
+    # For IPv4: 4 bytes IP + 2 bytes port = 6 bytes
+    # For IPv6: 16 bytes IP + 2 bytes port = 18 bytes
+    ip_bytes = ip_address_to_bytes(endpoint.ip)
+    port_bytes = uint16_to_bytes(endpoint.port)
+    return ip_bytes || port_bytes
+```
+
+### Enhanced Port Calculation Algorithm with Connection Offsets
+
+```pseudocode
+function calculate_port_with_offset(daily_key, session_id, time_window, src_endpoint, dst_endpoint, connection_id):
+    # Calculate port with connection-specific offset to prevent collisions
+    # between multiple parallel connections
+    
+    # Derive connection-specific offset (never transmitted)
+    connection_offset = derive_connection_offset(daily_key, src_endpoint, dst_endpoint, connection_id)
+    
+    # Calculate base port using existing algorithm
     session_id_bytes = uint64_to_bytes(session_id)
     time_window_bytes = uint64_to_bytes(time_window)
-    entropy_bytes = uint64_to_bytes(entropy)
+    offset_bytes = uint32_to_bytes(connection_offset)
     
-    # Use HMAC for port calculation
-    hmac_input = time_window_bytes || session_id_bytes || entropy_bytes
+    # Include connection offset in HMAC calculation
+    hmac_input = time_window_bytes || session_id_bytes || offset_bytes
     hmac_result = HMAC_SHA256(daily_key, hmac_input)
     
-    # Extract port efficiently
-    port_value = (hmac_result[0] << 8) | hmac_result[1]
-    port = MIN_PORT + (port_value % PORT_RANGE)
+    # Extract port value and apply offset
+    base_port_value = (hmac_result[0] << 8) | hmac_result[1]
     
-    return port
+    # Apply connection offset to create separated port ranges
+    offset_port_range = PORT_RANGE - PORT_OFFSET_RANGE
+    base_port = MIN_PORT + (base_port_value % offset_port_range)
+    
+    # Add connection-specific offset
+    final_port = base_port + (connection_offset * (PORT_OFFSET_RANGE / MAX_CONNECTION_OFFSET))
+    
+    # Ensure port stays within valid range
+    if final_port > MAX_PORT:
+        final_port = MIN_PORT + ((final_port - MIN_PORT) % PORT_RANGE)
+    
+    return final_port
+
 ```
 
-### Transmission Delay Handling
+### Adaptive Transmission Delay Handling
+
 ```pseudocode
-# Network transmission delays can cause packets to arrive during the next time window
-# To handle this, the protocol calculates ports for adjacent time windows
-# and listens on multiple ports simultaneously during transitions
+# Adaptive delay allowance strategy:
+# The protocol dynamically determines the number of ports to keep open based on 
+# measured network characteristics rather than using fixed values. This provides
+# optimal balance between security (fewer open ports) and reliability (sufficient
+# delay tolerance). Delay parameters are periodically negotiated between hosts
+# using existing HEARTBEAT packets with extended payload.
 #
-# Delay allowance strategy:
-# 1. Calculate ports for current time window
-# 2. Also calculate ports for previous and next time windows
-# 3. Listen on all three ports during transitions
-# 4. This provides 50ms allowance for transmission delay
+# Adaptive strategy:
+# 1. Continuously measure packet delays and network jitter
+# 2. Calculate required delay window using statistical analysis (95th percentile)
+# 3. Periodically negotiate delay parameters with peer using HEARTBEAT packets
+# 4. Adjust port listening window based on negotiated parameters
+# 5. Fallback to conservative defaults if negotiation fails
 ```
 
-function get_current_port_with_delay_allowance(daily_key, session_id):
-    # Calculate current port with allowance for transmission delay
-    # This function calculates ports for current and adjacent time windows
-    # to handle network transmission delays
+// Adaptive delay state management
+adaptive_delay_state = {
+    'current_delay_window': ADAPTIVE_DELAY_WINDOW_MIN,
+    'negotiated_delay_window': ADAPTIVE_DELAY_WINDOW_MIN,
+    'delay_measurements': [],
+    'last_negotiation_time': 0,
+    'peer_delay_window': ADAPTIVE_DELAY_WINDOW_MIN,
+    'network_jitter': 0,
+    'packet_loss_rate': 0.0,
+    'adaptation_enabled': true
+}
+
+function initialize_adaptive_delay():
+    adaptive_delay_state.current_delay_window = ADAPTIVE_DELAY_WINDOW_MIN
+    adaptive_delay_state.negotiated_delay_window = ADAPTIVE_DELAY_WINDOW_MIN
+    adaptive_delay_state.delay_measurements = []
+    adaptive_delay_state.last_negotiation_time = get_current_time_ms()
+    adaptive_delay_state.peer_delay_window = ADAPTIVE_DELAY_WINDOW_MIN
+    adaptive_delay_state.network_jitter = 0
+    adaptive_delay_state.packet_loss_rate = 0.0
+    adaptive_delay_state.adaptation_enabled = true
+
+function get_current_port_with_adaptive_delay_allowance(daily_key, session_id, src_endpoint, dst_endpoint, connection_id):
+    # Calculate current port with adaptive allowance for transmission delay
+    # Uses dynamically determined delay window based on network characteristics
     
-    # Get current time window (assume time functions are available)
+    # Get current effective delay window
+    effective_delay_window = get_effective_delay_window()
+    
+    # Get current time window
     current_time_window = get_current_time_window()
     
-    # Calculate ports for current window and adjacent windows
-    # This provides allowance for transmission delay
+    # Calculate ports for adaptive delay window
     ports = []
     
-    # Include previous, current, and next time windows
-    for offset in [-1, 0, 1]:
+    # Calculate symmetric window around current time
+    half_window = effective_delay_window // 2
+    start_offset = -half_window
+    end_offset = half_window + (effective_delay_window % 2)  # Handle odd window sizes
+    
+    for offset in range(start_offset, end_offset + 1):
         time_window = current_time_window + offset
-        port = calculate_port(daily_key, session_id, time_window, 0)
+        port = calculate_port_with_offset(daily_key, session_id, time_window, src_endpoint, dst_endpoint, connection_id)
         ports.append(port)
     
     return ports
 
-function calculate_multiple_ports(daily_key, session_id, count):
-    # Multiple port calculation with batch processing
-    # Includes allowance for transmission delay by calculating adjacent time windows
-    ports = []
+function get_effective_delay_window():
+    # Get current effective delay window size
+    if not adaptive_delay_state.adaptation_enabled:
+        return ADAPTIVE_DELAY_WINDOW_MIN
     
-    # Get current time window (assume time functions are available)
-    base_time_window = get_current_time_window()
+    # Use negotiated value if available and recent
+    current_time = get_current_time_ms()
+    negotiation_age = current_time - adaptive_delay_state.last_negotiation_time
     
-    # Pre-calculate time windows including allowance for transmission delay
-    # Calculate ports for current window and adjacent windows to handle delay
-    time_windows = []
-    for i in range(-count + 1, count + 1):
-        time_windows.append(base_time_window + i)
+    if negotiation_age < DELAY_NEGOTIATION_INTERVAL_MS * 2:
+        return adaptive_delay_state.negotiated_delay_window
     
-    # Batch calculate ports
-    for time_window in time_windows:
-        port = calculate_port(daily_key, session_id, time_window, 0)
-        ports.append(port)
+    # Fall back to locally calculated value
+    return adaptive_delay_state.current_delay_window
+
+### Network Delay Measurement and Analysis
+
+```pseudocode
+function measure_packet_delay(packet):
+    # Measure packet delay for adaptive delay window calculation
+    if not packet.contains_timestamp():
+        return
     
-    return ports
+    current_time = get_current_time_ms()
+    packet_timestamp = packet.get_timestamp()
+    
+    # Calculate packet delay (time difference between expected and actual arrival)
+    expected_time_window = calculate_time_window_from_timestamp(packet_timestamp)
+    actual_time_window = get_current_time_window()
+    
+    # Convert time window difference to milliseconds
+    delay_ms = (actual_time_window - expected_time_window) * HOP_INTERVAL_MS
+    
+    # Only record positive delays (packets arriving late)
+    if delay_ms >= 0:
+        record_delay_measurement(delay_ms)
+
+function record_delay_measurement(delay_ms):
+    # Record delay measurement for statistical analysis
+    current_time = get_current_time_ms()
+    
+    measurement = {
+        'delay_ms': delay_ms,
+        'timestamp': current_time,
+        'sequence': get_next_measurement_sequence()
+    }
+    
+    # Add to measurements buffer
+    adaptive_delay_state.delay_measurements.append(measurement)
+    
+    # Maintain buffer size
+    if len(adaptive_delay_state.delay_measurements) > DELAY_MEASUREMENT_SAMPLES * 2:
+        # Remove oldest measurements
+        adaptive_delay_state.delay_measurements = adaptive_delay_state.delay_measurements[-DELAY_MEASUREMENT_SAMPLES:]
+    
+    # Update delay window if we have enough samples
+    if len(adaptive_delay_state.delay_measurements) >= DELAY_MEASUREMENT_SAMPLES:
+        update_adaptive_delay_window()
+
+function update_adaptive_delay_window():
+    # Update adaptive delay window based on statistical analysis
+    recent_measurements = get_recent_delay_measurements()
+    
+    if len(recent_measurements) < DELAY_MEASUREMENT_SAMPLES // 2:
+        return  # Insufficient data
+    
+    # Calculate statistical metrics
+    delays = [m.delay_ms for m in recent_measurements]
+    
+    # Calculate 95th percentile delay
+    delays.sort()
+    percentile_index = int(len(delays) * DELAY_PERCENTILE_TARGET / 100)
+    percentile_delay = delays[min(percentile_index, len(delays) - 1)]
+    
+    # Calculate network jitter (standard deviation)
+    mean_delay = sum(delays) / len(delays)
+    variance = sum((d - mean_delay) ** 2 for d in delays) / len(delays)
+    jitter = math.sqrt(variance)
+    
+    # Update network statistics
+    adaptive_delay_state.network_jitter = jitter
+    
+    # Calculate required delay window
+    # Convert delay to time windows, add safety margin
+    safety_margin = max(SAFETY_MARGIN_MS, jitter)
+    total_delay_allowance = percentile_delay + safety_margin
+    required_windows = math.ceil(total_delay_allowance / HOP_INTERVAL_MS)
+    
+    # Apply bounds
+    new_delay_window = max(ADAPTIVE_DELAY_WINDOW_MIN, 
+                          min(required_windows, ADAPTIVE_DELAY_WINDOW_MAX))
+    
+    # Update current delay window with smoothing
+    if adaptive_delay_state.current_delay_window == 0:
+        adaptive_delay_state.current_delay_window = new_delay_window
+    else:
+        # Apply exponential smoothing to prevent rapid changes
+        smoothing_factor = 0.3
+        adaptive_delay_state.current_delay_window = int(
+            (1 - smoothing_factor) * adaptive_delay_state.current_delay_window +
+            smoothing_factor * new_delay_window
+        )
+
+function get_recent_delay_measurements():
+    # Get recent delay measurements for analysis
+    current_time = get_current_time_ms()
+    cutoff_time = current_time - DELAY_NEGOTIATION_INTERVAL_MS
+    
+    recent_measurements = []
+    for measurement in adaptive_delay_state.delay_measurements:
+        if measurement.timestamp >= cutoff_time:
+            recent_measurements.append(measurement)
+    
+    return recent_measurements
+
+function calculate_packet_loss_rate():
+    # Calculate packet loss rate for delay window adjustment
+    if len(adaptive_delay_state.delay_measurements) < DELAY_MEASUREMENT_SAMPLES:
+        return 0.0
+    
+    # Use sequence numbers to detect missing packets
+    recent_measurements = get_recent_delay_measurements()
+    if len(recent_measurements) < 2:
+        return 0.0
+    
+    # Calculate expected vs received packets
+    min_seq = min(m.sequence for m in recent_measurements)
+    max_seq = max(m.sequence for m in recent_measurements)
+    expected_packets = max_seq - min_seq + 1
+    received_packets = len(recent_measurements)
+    
+    if expected_packets <= 0:
+        return 0.0
+    
+    loss_rate = (expected_packets - received_packets) / expected_packets
+    adaptive_delay_state.packet_loss_rate = max(0.0, min(1.0, loss_rate))
+    
+    return adaptive_delay_state.packet_loss_rate
+```
+
+### Delay Parameter Negotiation Using HEARTBEAT Packets
+
+```pseudocode
+function create_enhanced_heartbeat_packet():
+    # Create HEARTBEAT packet with delay negotiation parameters
+    base_heartbeat = create_heartbeat_packet()
+    
+    # Add delay negotiation payload
+    delay_payload = {
+        'current_delay_window': adaptive_delay_state.current_delay_window,
+        'network_jitter': int(adaptive_delay_state.network_jitter),
+        'packet_loss_rate': int(adaptive_delay_state.packet_loss_rate * 1000),  # Encode as per-mille
+        'measurement_count': len(adaptive_delay_state.delay_measurements),
+        'adaptation_enabled': adaptive_delay_state.adaptation_enabled,
+        'negotiation_sequence': get_negotiation_sequence()
+    }
+    
+    # Serialize delay payload (compact encoding)
+    serialized_payload = serialize_delay_payload(delay_payload)
+    
+    # Append to heartbeat packet payload
+    enhanced_payload = base_heartbeat.payload + serialized_payload
+    base_heartbeat.payload = enhanced_payload
+    base_heartbeat.payload_length = len(enhanced_payload)
+    
+    return base_heartbeat
+
+function process_enhanced_heartbeat_packet(heartbeat_packet):
+    # Process HEARTBEAT packet with delay negotiation parameters
+    base_result = process_base_heartbeat(heartbeat_packet)
+    
+    if base_result != SUCCESS:
+        return base_result
+    
+    # Extract delay negotiation payload
+    if len(heartbeat_packet.payload) <= BASE_HEARTBEAT_PAYLOAD_SIZE:
+        return SUCCESS  # No delay negotiation data
+    
+    delay_payload_data = heartbeat_packet.payload[BASE_HEARTBEAT_PAYLOAD_SIZE:]
+    delay_payload = deserialize_delay_payload(delay_payload_data)
+    
+    if delay_payload == null:
+        return SUCCESS  # Invalid delay data, ignore
+    
+    # Process peer's delay parameters
+    return process_peer_delay_parameters(delay_payload)
+
+function process_peer_delay_parameters(peer_delay_payload):
+    # Process peer's delay parameters and negotiate optimal window
+    peer_window = peer_delay_payload.current_delay_window
+    peer_jitter = peer_delay_payload.network_jitter
+    peer_loss_rate = peer_delay_payload.packet_loss_rate / 1000.0  # Convert from per-mille
+    
+    # Store peer parameters
+    adaptive_delay_state.peer_delay_window = peer_window
+    
+    # Calculate negotiated delay window
+    # Use maximum of local and peer requirements, with loss rate adjustment
+    local_window = adaptive_delay_state.current_delay_window
+    
+    # Adjust for packet loss (increase window if high loss rate)
+    loss_adjustment = 0
+    if peer_loss_rate > 0.05:  # > 5% loss rate
+        loss_adjustment = max(1, int(peer_loss_rate * 10))
+    
+    negotiated_window = max(local_window, peer_window) + loss_adjustment
+    
+    # Apply bounds
+    negotiated_window = max(ADAPTIVE_DELAY_WINDOW_MIN,
+                           min(negotiated_window, ADAPTIVE_DELAY_WINDOW_MAX))
+    
+    # Update negotiated parameters
+    adaptive_delay_state.negotiated_delay_window = negotiated_window
+    adaptive_delay_state.last_negotiation_time = get_current_time_ms()
+    
+    # Log negotiation result
+    log_delay_negotiation(local_window, peer_window, negotiated_window)
+    
+    return SUCCESS
+
+function serialize_delay_payload(delay_payload):
+    # Compact serialization of delay negotiation payload
+    # Total size: 8 bytes for efficient transmission
+    
+    # Pack into 64-bit structure:
+    # Bits 0-7: current_delay_window (8 bits, max 255)
+    # Bits 8-19: network_jitter (12 bits, max 4095ms)
+    # Bits 20-29: packet_loss_rate (10 bits, 0-1023 per-mille)
+    # Bits 30-37: measurement_count (8 bits, max 255)
+    # Bits 38-47: negotiation_sequence (10 bits, rolling counter)
+    # Bit 48: adaptation_enabled (1 bit)
+    # Bits 49-63: reserved (15 bits)
+    
+    packed_data = 0
+    packed_data |= (delay_payload.current_delay_window & 0xFF)
+    packed_data |= ((delay_payload.network_jitter & 0xFFF) << 8)
+    packed_data |= ((delay_payload.packet_loss_rate & 0x3FF) << 20)
+    packed_data |= ((delay_payload.measurement_count & 0xFF) << 30)
+    packed_data |= ((delay_payload.negotiation_sequence & 0x3FF) << 38)
+    packed_data |= ((1 if delay_payload.adaptation_enabled else 0) << 48)
+    
+    return packed_data.to_bytes(8, 'big')
+
+function deserialize_delay_payload(payload_data):
+    # Deserialize compact delay negotiation payload
+    if len(payload_data) < 8:
+        return null
+    
+    packed_data = int.from_bytes(payload_data[0:8], 'big')
+    
+    return {
+        'current_delay_window': packed_data & 0xFF,
+        'network_jitter': (packed_data >> 8) & 0xFFF,
+        'packet_loss_rate': (packed_data >> 20) & 0x3FF,
+        'measurement_count': (packed_data >> 30) & 0xFF,
+        'negotiation_sequence': (packed_data >> 38) & 0x3FF,
+        'adaptation_enabled': bool((packed_data >> 48) & 0x1)
+    }
+
+function should_trigger_delay_negotiation():
+    # Determine if delay negotiation should be triggered
+    current_time = get_current_time_ms()
+    time_since_last = current_time - adaptive_delay_state.last_negotiation_time
+    
+    # Periodic negotiation
+    if time_since_last >= DELAY_NEGOTIATION_INTERVAL_MS:
+        return true
+    
+    # Significant change in network conditions
+    if adaptive_delay_state.current_delay_window != adaptive_delay_state.negotiated_delay_window:
+        change_magnitude = abs(adaptive_delay_state.current_delay_window - 
+                              adaptive_delay_state.negotiated_delay_window)
+        if change_magnitude >= 2:  # Significant change
+            return true
+    
+    # High packet loss detected
+    if adaptive_delay_state.packet_loss_rate > 0.1:  # > 10% loss
+        return true
+    
+    return false
+
+function handle_adaptive_delay_on_packet_receive(packet):
+    # Handle adaptive delay processing on packet reception
+    
+    # Measure packet delay
+    measure_packet_delay(packet)
+    
+    # Update packet loss statistics
+    calculate_packet_loss_rate()
+    
+    # Check if negotiation should be triggered
+    if should_trigger_delay_negotiation():
+        schedule_delay_negotiation()
+
+function schedule_delay_negotiation():
+    # Schedule delay parameter negotiation in next heartbeat
+    session_state.pending_delay_negotiation = true
+
 ```
 
 function uint64_to_bytes(value):
@@ -1211,6 +1661,75 @@ function bytes_to_uint16(bytes_array):
     # Optimized bytes to uint16 conversion
     return int.from_bytes(bytes_array[0:2], byteorder='big')
 ```
+
+## Port Collision Avoidance for Multiple Parallel Connections
+
+### Design Overview
+
+When multiple connections exist between the same two hosts, each connection must use different ports at any given time to prevent datagram delivery conflicts. The solution uses **cryptographic derivation** of connection-specific port offsets without exposing these offsets during connection establishment.
+
+### Key Security Properties
+
+1. **Zero Exposure**: Connection offsets are never transmitted or exposed during handshake
+2. **Cryptographic Randomness**: Each connection gets a unique, unpredictable offset derived from HKDF
+3. **Domain Separation**: HKDF ensures different connections produce independent offsets
+4. **Collision Resistance**: 12-bit offset space (4096 values) provides sufficient separation
+5. **Deterministic**: Both endpoints derive the same offset from the same connection parameters
+
+### Collision Avoidance Mechanism
+
+```pseudocode
+# Example: Two parallel connections between Host A and Host B
+
+Connection 1:
+- connection_id = 0x1234567890ABCDEF
+- Derived offset = 0x042 (66 decimal)
+- Port calculation includes offset 66
+
+Connection 2:
+- connection_id = 0xFEDCBA0987654321  
+- Derived offset = 0x7A1 (1953 decimal)
+- Port calculation includes offset 1953
+
+# At any time window, these connections use different port ranges:
+# Connection 1: ports in range [base_port + 66*offset_multiplier]
+# Connection 2: ports in range [base_port + 1953*offset_multiplier]
+# No collision possible between the two connections
+```
+
+### Connection ID Generation for Collision Avoidance
+
+```pseudocode
+function generate_connection_id(local_endpoint, remote_endpoint, local_random):
+    # Generate unique connection ID that ensures different connections
+    # get different offsets even if endpoints are the same
+    
+    # Use local random entropy to ensure uniqueness
+    local_bytes = endpoint_to_bytes(local_endpoint)
+    remote_bytes = endpoint_to_bytes(remote_endpoint)
+    timestamp_bytes = uint64_to_bytes(get_current_time_ms())
+    random_bytes = get_secure_random_bytes(16)  # 128-bit random
+    
+    # Combine all sources for unique connection ID
+    id_material = local_bytes || remote_bytes || timestamp_bytes || random_bytes
+    
+    # Hash to create 64-bit connection ID
+    hash_result = SHA256(id_material)
+    connection_id = bytes_to_uint64(hash_result[0:8])
+    
+    return connection_id
+```
+
+### Port Range Management
+
+The 64,512 available ports (1024-65535) are divided into offset ranges:
+
+- **Base Range**: 48,384 ports for base port calculation
+- **Offset Range**: 16,128 ports for connection offsets  
+- **Maximum Connections**: 4,096 parallel connections supported
+- **Per-Connection Range**: ~4 ports per connection offset
+
+This design ensures sufficient port space while maintaining security and collision avoidance.
 
 ## Time Synchronization Specification
 
@@ -1808,6 +2327,116 @@ function handle_enumeration_attempt(error_details):
     # Send error response
     send_error_packet(ERROR_PSK_ENUMERATION_ATTEMPT, "Enumeration attempt detected")
 
+## Additional Timeout Specifications
+
+### Complete Timeout Documentation
+
+```pseudocode
+# Connection establishment timeouts
+CONNECTION_TIMEOUT_MS = 30000           // Maximum time for connection establishment
+HANDSHAKE_TIMEOUT_MS = 15000            // Handshake completion timeout
+PEER_RESPONSE_TIMEOUT_MS = 10000        // Generic peer response timeout
+
+# Session management timeouts
+SESSION_IDLE_TIMEOUT_MS = 300000        // Session idle timeout (5 minutes)
+SESSION_CLEANUP_INTERVAL_MS = 60000     // Session cleanup check interval
+SESSION_GRACE_PERIOD_MS = 30000         // Grace period before session cleanup
+
+# Data transmission timeouts
+DATA_TRANSMISSION_TIMEOUT_MS = 5000     // Data packet transmission timeout
+ACK_TIMEOUT_MS = 1000                   // ACK generation timeout
+REORDER_TIMEOUT_MS = 3000               // Out-of-order packet timeout
+RETRANSMIT_TIMEOUT_MS = 2000            // Base retransmission timeout
+
+# Protocol-specific timeouts
+PORT_HOP_TRANSITION_MS = 50             // Port hop transition window
+TIME_WINDOW_TOLERANCE_MS = 100          // Time window boundary tolerance
+CRYPTO_OPERATION_TIMEOUT_MS = 1000      // Cryptographic operation timeout
+
+# System resource timeouts
+MEMORY_CLEANUP_INTERVAL_MS = 120000     // Memory cleanup interval (2 minutes)
+STATS_COLLECTION_INTERVAL_MS = 60000    // Statistics collection interval
+HEALTH_CHECK_INTERVAL_MS = 30000        // Health check interval
+
+function handle_timeout_event(timeout_type, context):
+    current_time = get_current_time_ms()
+    
+    switch timeout_type:
+        case CONNECTION_TIMEOUT:
+            handle_connection_timeout(context)
+            
+        case HANDSHAKE_TIMEOUT:
+            handle_handshake_timeout(context)
+            
+        case SESSION_IDLE_TIMEOUT:
+            handle_session_idle_timeout(context)
+            
+        case DATA_TRANSMISSION_TIMEOUT:
+            handle_data_transmission_timeout(context)
+            
+        case RETRANSMIT_TIMEOUT:
+            handle_retransmission_timeout(context)
+            
+        case FRAGMENT_TIMEOUT:
+            handle_fragment_timeout(context)
+            
+        case RECOVERY_TIMEOUT:
+            handle_recovery_timeout(context)
+            
+        case WINDOW_TIMEOUT:
+            handle_window_timeout(context)
+            
+        default:
+            log_error("Unknown timeout type: " + timeout_type)
+
+function handle_connection_timeout(context):
+    session_id = context.session_id
+    
+    # Log timeout event
+    log_timeout_event("Connection establishment timeout", session_id)
+    
+    # Clean up connection state
+    cleanup_connection_state(session_id)
+    
+    # Notify application of connection failure
+    notify_application(CONNECTION_FAILED, session_id)
+
+function handle_session_idle_timeout(context):
+    session_id = context.session_id
+    last_activity = context.last_activity_time
+    current_time = get_current_time_ms()
+    
+    if (current_time - last_activity) > SESSION_IDLE_TIMEOUT_MS:
+        # Send session termination notice
+        send_session_termination(session_id, "Idle timeout")
+        
+        # Clean up session
+        cleanup_session(session_id)
+        
+        log_session_event("Session terminated due to idle timeout", session_id)
+
+function schedule_timeout(timeout_type, delay_ms, context):
+    timeout_event = {
+        'type': timeout_type,
+        'expiry_time': get_current_time_ms() + delay_ms,
+        'context': context
+    }
+    
+    add_to_timeout_queue(timeout_event)
+
+function process_timeout_queue():
+    current_time = get_current_time_ms()
+    expired_timeouts = []
+    
+    for timeout_event in timeout_queue:
+        if current_time >= timeout_event.expiry_time:
+            expired_timeouts.append(timeout_event)
+    
+    for timeout_event in expired_timeouts:
+        handle_timeout_event(timeout_event.type, timeout_event.context)
+        remove_from_timeout_queue(timeout_event)
+```
+
 // Error recovery utility functions
 function calculate_backoff_time(retry_count):
     # Exponential backoff with jitter
@@ -1864,4 +2493,2297 @@ function handle_malformed_packet(packet_data, error_reason):
     
     # Log the error
     log_error("Malformed packet: " + error_reason)
+
+## Sequence Number Negotiation Specification
+
+### Zero-Knowledge Sequence Number Exchange
+
+The protocol uses zero-knowledge proofs to negotiate initial sequence numbers without revealing the actual values until both peers have committed to their choices. This prevents sequence number prediction attacks and ensures fair negotiation.
+
+### Sequence Negotiation Protocol
+
+```pseudocode
+# Sequence number negotiation phases
+SEQ_NEG_PHASE_COMMIT = 1     # Commitment phase
+SEQ_NEG_PHASE_REVEAL = 2     # Reveal phase  
+SEQ_NEG_PHASE_CONFIRM = 3    # Confirmation phase
+
+function negotiate_sequence_numbers(peer_connection):
+    # Phase 1: Commitment
+    local_sequence = generate_secure_random_32bit()
+    local_nonce = generate_secure_random_16bit()
+    
+    # Create commitment using secure hash
+    commitment_input = local_sequence || local_nonce || session_id
+    local_commitment = SHA256(commitment_input)[0:4]  # First 32 bits
+    
+    # Send commitment
+    commit_packet = create_sequence_neg_packet(
+        phase = SEQ_NEG_PHASE_COMMIT,
+        commitment = local_commitment,
+        nonce = local_nonce,
+        proof = 0
+    )
+    send_packet(commit_packet)
+    
+    # Receive peer commitment
+    peer_commit_packet = receive_packet_timeout(SEQUENCE_NEGOTIATION_TIMEOUT_MS)
+    if peer_commit_packet == null or peer_commit_packet.phase != SEQ_NEG_PHASE_COMMIT:
+        return ERROR_SEQUENCE_NEGOTIATION_FAILED
+    
+    # Phase 2: Reveal
+    reveal_packet = create_sequence_neg_packet(
+        phase = SEQ_NEG_PHASE_REVEAL,
+        commitment = local_sequence,  # Reveal actual sequence
+        nonce = local_nonce,
+        proof = calculate_sequence_proof(local_sequence, local_nonce, peer_commit_packet.commitment)
+    )
+    send_packet(reveal_packet)
+    
+    # Receive peer reveal
+    peer_reveal_packet = receive_packet_timeout(SEQUENCE_NEGOTIATION_TIMEOUT_MS)
+    if peer_reveal_packet == null or peer_reveal_packet.phase != SEQ_NEG_PHASE_REVEAL:
+        return ERROR_SEQUENCE_NEGOTIATION_FAILED
+    
+    # Verify peer's commitment
+    peer_commitment_check = SHA256(peer_reveal_packet.commitment || peer_reveal_packet.nonce || session_id)[0:4]
+    if peer_commitment_check != peer_commit_packet.commitment:
+        return ERROR_SEQUENCE_PROOF_INVALID
+    
+    # Phase 3: Confirmation
+    confirmation_proof = calculate_confirmation_proof(local_sequence, peer_reveal_packet.commitment)
+    confirm_packet = create_sequence_neg_packet(
+        phase = SEQ_NEG_PHASE_CONFIRM,
+        commitment = local_commitment,
+        nonce = local_nonce,
+        proof = confirmation_proof
+    )
+    send_packet(confirm_packet)
+    
+    # Receive peer confirmation
+    peer_confirm_packet = receive_packet_timeout(SEQUENCE_NEGOTIATION_TIMEOUT_MS)
+    if peer_confirm_packet == null or peer_confirm_packet.phase != SEQ_NEG_PHASE_CONFIRM:
+        return ERROR_SEQUENCE_NEGOTIATION_FAILED
+    
+    # Verify final proof
+    if not verify_confirmation_proof(peer_confirm_packet.proof, peer_reveal_packet.commitment, local_sequence):
+        return ERROR_SEQUENCE_PROOF_INVALID
+    
+    # Negotiation successful
+    session_state.local_sequence = local_sequence
+    session_state.peer_sequence = peer_reveal_packet.commitment
+    
+    return SUCCESS
+
+function calculate_sequence_proof(sequence, nonce, peer_commitment):
+    # Create zero-knowledge proof that sequence matches commitment without revealing sequence
+    proof_input = sequence || nonce || peer_commitment || session_id
+    return HMAC_SHA256(session_key, proof_input)[0:4]
+
+function calculate_confirmation_proof(local_sequence, peer_sequence):
+    # Final confirmation that both parties have valid sequences
+    confirmation_input = min(local_sequence, peer_sequence) || max(local_sequence, peer_sequence) || session_id
+    return HMAC_SHA256(session_key, confirmation_input)[0:4]
+
+function verify_confirmation_proof(proof, peer_sequence, local_sequence):
+    expected_proof = calculate_confirmation_proof(local_sequence, peer_sequence)
+    return constant_time_compare(proof, expected_proof)
+```
+
+### Sequence Number Security Properties
+
+```pseudocode
+# Security requirements for sequence negotiation
+function validate_sequence_negotiation_security():
+    # 1. Commitment hiding: commitment does not reveal sequence number
+    assert commitment_reveals_no_information_about_sequence()
+    
+    # 2. Commitment binding: peer cannot change sequence after commitment
+    assert peer_cannot_change_sequence_after_commitment()
+    
+    # 3. Proof soundness: invalid sequences cannot produce valid proofs
+    assert invalid_sequences_produce_invalid_proofs()
+    
+    # 4. Proof zero-knowledge: proofs reveal no information about sequences
+    assert proofs_reveal_no_sequence_information()
+    
+    # 5. Negotiation fairness: neither peer can bias the other's choice
+    assert negotiation_is_fair_and_unbiased()
+
+function handle_sequence_negotiation_timeout():
+    # Cleanup negotiation state
+    clear_negotiation_buffers()
+    secure_zero_sequence_material()
+    
+    # Retry with exponential backoff
+    if negotiation_attempts < MAX_SEQUENCE_NEGOTIATION_ATTEMPTS:
+        backoff_time = SEQUENCE_NEGOTIATION_TIMEOUT_MS * (2 ** negotiation_attempts)
+        schedule_retry(backoff_time)
+        negotiation_attempts += 1
+    else:
+        # Negotiation failed permanently
+        transition_to_state(SEQUENCE_NEGOTIATION_FAILED)
+        return ERROR_SEQUENCE_NEGOTIATION_TIMEOUT
+```
+
+## Recovery Mechanisms Specification
+
+### Recovery Strategy Framework
+
+The protocol implements a multi-layered recovery system that can handle various failure scenarios without compromising security or requiring session re-establishment.
+
+### Recovery Types and Triggers
+
+```pseudocode
+# Recovery trigger conditions
+function detect_recovery_need():
+    if time_drift_detected():
+        return RECOVERY_TYPE_TIME_RESYNC
+    elif sequence_mismatch_detected():
+        return RECOVERY_TYPE_SEQUENCE_REPAIR
+    elif authentication_failures_detected():
+        return RECOVERY_TYPE_REKEY
+    elif multiple_failures_detected():
+        return RECOVERY_TYPE_EMERGENCY
+    else:
+        return RECOVERY_TYPE_NONE
+
+function time_drift_detected():
+    return abs(local_time - peer_time) > TIME_SYNC_TOLERANCE_MS
+
+function sequence_mismatch_detected():
+    return (expected_sequence - received_sequence) > SEQUENCE_WINDOW_SIZE
+
+function authentication_failures_detected():
+    return auth_failure_count > MAX_AUTH_FAILURES_BEFORE_REKEY
+
+function multiple_failures_detected():
+    return (time_drift_detected() and sequence_mismatch_detected()) or 
+           critical_error_count > MAX_CRITICAL_ERRORS
+```
+
+### Time Resynchronization Recovery
+
+```pseudocode
+function execute_time_resync_recovery():
+    # Step 1: Send time sync request
+    challenge_nonce = generate_secure_random_32bit()
+    local_timestamp = get_current_time_ms()
+    
+    sync_request = create_time_sync_request(
+        challenge_nonce = challenge_nonce,
+        local_timestamp = local_timestamp
+    )
+    
+    send_time = get_current_time_ms()
+    send_packet(sync_request)
+    
+    # Step 2: Receive time sync response
+    sync_response = receive_packet_timeout(TIME_RESYNC_TIMEOUT_MS)
+    receive_time = get_current_time_ms()
+    
+    if sync_response == null or sync_response.type != PACKET_TYPE_TIME_SYNC_RESPONSE:
+        return ERROR_TIME_RESYNC_TIMEOUT
+    
+    if sync_response.challenge_nonce != challenge_nonce:
+        return ERROR_TIME_RESYNC_INVALID_CHALLENGE
+    
+    # Step 3: Calculate time offset
+    round_trip_time = receive_time - send_time
+    estimated_peer_time = sync_response.peer_timestamp + (round_trip_time / 2)
+    time_offset = estimated_peer_time - receive_time
+    
+    # Step 4: Validate and apply offset
+    if abs(time_offset) > MAX_TIME_OFFSET_MS:
+        return ERROR_TIME_RESYNC_OFFSET_TOO_LARGE
+    
+    # Apply gradual adjustment to prevent port hopping disruption
+    apply_gradual_time_adjustment(time_offset)
+    
+    # Step 5: Verify synchronization
+    if verify_time_synchronization():
+        log_recovery_success("Time resynchronization completed")
+        return SUCCESS
+    else:
+        return ERROR_TIME_RESYNC_VERIFICATION_FAILED
+
+function apply_gradual_time_adjustment(offset):
+    # Apply offset gradually over multiple hop intervals to avoid disruption
+    adjustment_steps = max(1, abs(offset) / HOP_INTERVAL_MS)
+    step_size = offset / adjustment_steps
+    
+    for step in range(adjustment_steps):
+        session_state.time_offset += step_size
+        wait(HOP_INTERVAL_MS)
+```
+
+### Sequence Repair Recovery
+
+```pseudocode
+function execute_sequence_repair_recovery():
+    # Step 1: Determine repair window
+    last_valid_sequence = session_state.last_acknowledged_sequence
+    current_sequence = session_state.expected_sequence
+    repair_window = current_sequence - last_valid_sequence
+    
+    if repair_window > MAX_REPAIR_WINDOW_SIZE:
+        # Gap too large, escalate to emergency recovery
+        return execute_emergency_recovery()
+    
+    # Step 2: Send repair request
+    repair_nonce = generate_secure_random_32bit()
+    repair_request = create_repair_request(
+        repair_nonce = repair_nonce,
+        last_known_sequence = last_valid_sequence,
+        repair_window_size = repair_window
+    )
+    
+    send_packet(repair_request)
+    
+    # Step 3: Receive repair response
+    repair_response = receive_packet_timeout(SEQUENCE_REPAIR_TIMEOUT_MS)
+    
+    if repair_response == null or repair_response.type != PACKET_TYPE_REPAIR_RESPONSE:
+        return ERROR_SEQUENCE_REPAIR_TIMEOUT
+    
+    if repair_response.repair_nonce != repair_nonce:
+        return ERROR_SEQUENCE_REPAIR_INVALID_NONCE
+    
+    # Step 4: Synchronize sequence numbers
+    if repair_response.current_sequence > session_state.expected_sequence:
+        # Peer is ahead, update our expectation
+        session_state.expected_sequence = repair_response.current_sequence
+    elif repair_response.current_sequence < session_state.expected_sequence:
+        # We are ahead, peer will catch up
+        # No action needed, continue normal operation
+    
+    # Step 5: Clear any buffered out-of-order packets in repair window
+    clear_reorder_buffer_in_range(last_valid_sequence, repair_response.current_sequence)
+    
+    log_recovery_success("Sequence repair completed")
+    return SUCCESS
+```
+
+### Session Rekey Recovery
+
+```pseudocode
+function execute_rekey_recovery():
+    # Step 1: Generate new session key material
+    rekey_nonce = generate_secure_random_32bit()
+    new_daily_key = derive_daily_key_for_current_date(psk)
+    new_session_key_material = generate_secure_random_256bit()
+    
+    # Step 2: Create key commitment
+    key_commitment = create_key_commitment(new_session_key_material, rekey_nonce)
+    
+    rekey_request = create_rekey_request(
+        rekey_nonce = rekey_nonce,
+        new_key_commitment = key_commitment
+    )
+    
+    send_packet(rekey_request)
+    
+    # Step 3: Receive peer's rekey response
+    rekey_response = receive_packet_timeout(REKEY_TIMEOUT_MS)
+    
+    if rekey_response == null or rekey_response.type != PACKET_TYPE_REKEY_RESPONSE:
+        return ERROR_REKEY_TIMEOUT
+    
+    if rekey_response.rekey_nonce != rekey_nonce:
+        return ERROR_REKEY_INVALID_NONCE
+    
+    # Step 4: Derive new session key
+    combined_key_material = new_session_key_material || rekey_response.new_key_commitment
+    new_session_key = derive_session_key(new_daily_key, session_id, combined_key_material)
+    
+    # Step 5: Verify rekey confirmation
+    expected_confirmation = HMAC_SHA256(new_session_key, "rekey_confirmation" || session_id)
+    if not constant_time_compare(rekey_response.confirmation, expected_confirmation[0:16]):
+        return ERROR_REKEY_CONFIRMATION_INVALID
+    
+    # Step 6: Atomically switch to new key
+    old_session_key = session_state.session_key
+    session_state.session_key = new_session_key
+    session_state.daily_key = new_daily_key
+    
+    # Step 7: Secure cleanup of old key
+    secure_zero_memory(old_session_key)
+    secure_zero_memory(new_session_key_material)
+    
+    log_recovery_success("Session rekey completed")
+    return SUCCESS
+
+function create_key_commitment(key_material, nonce):
+    commitment_input = key_material || nonce || session_id || "key_commitment"
+    return SHA256(commitment_input)
+```
+
+### Emergency Recovery
+
+```pseudocode
+function execute_emergency_recovery():
+    # Emergency recovery performs complete session re-establishment
+    # while preserving the existing session ID and PSK relationship
+    
+    # Step 1: Generate emergency recovery token
+    emergency_token = generate_secure_random_32bit()
+    emergency_data = create_emergency_recovery_data()
+    
+    emergency_request = create_emergency_request(
+        emergency_token = emergency_token,
+        emergency_data = emergency_data
+    )
+    
+    send_packet(emergency_request)
+    
+    # Step 2: Receive emergency response
+    emergency_response = receive_packet_timeout(EMERGENCY_RECOVERY_TIMEOUT_MS)
+    
+    if emergency_response == null or emergency_response.type != PACKET_TYPE_EMERGENCY_RESPONSE:
+        return ERROR_EMERGENCY_RECOVERY_TIMEOUT
+    
+    if emergency_response.emergency_token != emergency_token:
+        return ERROR_EMERGENCY_RECOVERY_INVALID_TOKEN
+    
+    # Step 3: Re-establish session state
+    if not verify_emergency_response(emergency_response):
+        return ERROR_EMERGENCY_RECOVERY_VERIFICATION_FAILED
+    
+    # Step 4: Reset session to known good state
+    reset_session_to_emergency_state()
+    
+    # Step 5: Re-negotiate sequence numbers
+    if negotiate_sequence_numbers(peer_connection) != SUCCESS:
+        return ERROR_EMERGENCY_RECOVERY_SEQUENCE_FAILED
+    
+    # Step 6: Re-synchronize time
+    if execute_time_resync_recovery() != SUCCESS:
+        return ERROR_EMERGENCY_RECOVERY_TIME_FAILED
+    
+    log_recovery_success("Emergency recovery completed")
+    return SUCCESS
+
+function create_emergency_recovery_data():
+    # Include essential session information for recovery
+    recovery_data = {
+        'session_id': session_state.session_id,
+        'last_known_good_timestamp': session_state.last_known_good_timestamp,
+        'last_known_good_sequence': session_state.last_known_good_sequence,
+        'recovery_reason': determine_recovery_reason()
+    }
+    
+    # Encrypt recovery data with PSK-derived key
+    recovery_key = derive_recovery_key(psk, session_id)
+    encrypted_data = encrypt_recovery_data(recovery_data, recovery_key)
+    
+    return encrypted_data
+
+function reset_session_to_emergency_state():
+    # Clear all potentially corrupted state
+    clear_reorder_buffers()
+    clear_retransmission_queues()
+    reset_flow_control_state()
+    reset_congestion_control_state()
+    
+    # Reset to conservative defaults
+    session_state.congestion_window = INITIAL_CONGESTION_WINDOW
+    session_state.receive_window = INITIAL_RECEIVE_WINDOW
+    session_state.rtt_srtt = RTT_INITIAL_MS
+    session_state.rtt_rttvar = RTT_INITIAL_MS / 2
+```
+
+### Recovery Coordination
+
+```pseudocode
+function coordinate_recovery(recovery_type):
+    # Prevent multiple concurrent recovery attempts
+    if session_state.recovery_in_progress:
+        return ERROR_RECOVERY_ALREADY_IN_PROGRESS
+    
+    session_state.recovery_in_progress = true
+    session_state.recovery_start_time = get_current_time_ms()
+    session_state.recovery_attempts += 1
+    
+    # Execute appropriate recovery strategy
+    recovery_result = execute_recovery_strategy(recovery_type)
+    
+    # Update recovery state
+    session_state.recovery_in_progress = false
+    
+    if recovery_result == SUCCESS:
+        session_state.recovery_attempts = 0
+        session_state.last_successful_recovery = get_current_time_ms()
+        return SUCCESS
+    else:
+        # Handle recovery failure
+        if session_state.recovery_attempts >= RECOVERY_MAX_ATTEMPTS:
+            # Escalate to next recovery level or fail session
+            return escalate_recovery_failure(recovery_type)
+        else:
+            # Schedule retry with exponential backoff
+            backoff_time = RECOVERY_RETRY_INTERVAL_MS * (2 ** session_state.recovery_attempts)
+            schedule_recovery_retry(recovery_type, backoff_time)
+            return ERROR_RECOVERY_RETRY_SCHEDULED
+
+function escalate_recovery_failure(failed_recovery_type):
+    if failed_recovery_type == RECOVERY_TYPE_TIME_RESYNC:
+        return coordinate_recovery(RECOVERY_TYPE_SEQUENCE_REPAIR)
+    elif failed_recovery_type == RECOVERY_TYPE_SEQUENCE_REPAIR:
+        return coordinate_recovery(RECOVERY_TYPE_REKEY)
+    elif failed_recovery_type == RECOVERY_TYPE_REKEY:
+        return coordinate_recovery(RECOVERY_TYPE_EMERGENCY)
+    else:
+        # Emergency recovery failed, session is unrecoverable
+        transition_to_state(SESSION_FAILED)
+        return ERROR_SESSION_UNRECOVERABLE
+```
+
+## Packet Fragmentation Specification
+
+### Fragmentation Overview
+
+The protocol implements application-layer fragmentation to handle packets that exceed the network MTU while maintaining security and reliability properties across fragments.
+
+### Fragmentation Triggers and Policies
+
+```pseudocode
+function should_fragment_packet(packet, mtu):
+    packet_size = calculate_total_packet_size(packet)
+    return packet_size > (mtu - IP_HEADER_SIZE - UDP_HEADER_SIZE)
+
+function calculate_fragment_parameters(data_length, mtu):
+    # Calculate usable payload size per fragment
+    header_overhead = COMMON_HEADER_SIZE + FRAGMENT_HEADER_SIZE
+    max_fragment_payload = min(MAX_FRAGMENT_SIZE, mtu - header_overhead)
+    
+    # Calculate number of fragments needed
+    fragment_count = (data_length + max_fragment_payload - 1) / max_fragment_payload
+    
+    if fragment_count > MAX_FRAGMENTS:
+        return ERROR_PACKET_TOO_LARGE
+    
+    return {
+        'fragment_count': fragment_count,
+        'fragment_payload_size': max_fragment_payload,
+        'last_fragment_size': data_length % max_fragment_payload
+    }
+```
+
+### Fragmentation Process
+
+```pseudocode
+function fragment_packet(original_packet, fragment_params):
+    fragment_id = generate_fragment_id()
+    fragments = []
+    data_offset = 0
+    
+    for fragment_index in range(fragment_params.fragment_count):
+        # Determine fragment payload size
+        if fragment_index == fragment_params.fragment_count - 1:
+            payload_size = fragment_params.last_fragment_size
+        else:
+            payload_size = fragment_params.fragment_payload_size
+        
+        # Extract fragment payload
+        fragment_payload = original_packet.payload[data_offset:data_offset + payload_size]
+        
+        # Create fragment header
+        fragment_header = create_fragment_header(
+            fragment_id = fragment_id,
+            fragment_index = fragment_index,
+            total_fragments = fragment_params.fragment_count,
+            fragment_payload_size = payload_size
+        )
+        
+        # Create complete fragment packet
+        fragment_packet = create_packet(
+            type = PACKET_TYPE_FRAGMENT,
+            session_id = original_packet.session_id,
+            sequence_number = original_packet.sequence_number + fragment_index,
+            payload = fragment_header || fragment_payload
+        )
+        
+        fragments.append(fragment_packet)
+        data_offset += payload_size
+    
+    return fragments
+
+function generate_fragment_id():
+    # Generate unique fragment ID for this session
+    current_time = get_current_time_ms()
+    session_fragment_counter = session_state.fragment_counter
+    session_state.fragment_counter = (session_state.fragment_counter + 1) % FRAGMENT_ID_SPACE
+    
+    # Combine timestamp and counter for uniqueness
+    fragment_id = (current_time & 0xFFFF0000) | session_fragment_counter
+    return fragment_id
+```
+
+### Fragment Transmission and Pacing
+
+```pseudocode
+function transmit_fragments(fragments):
+    # Apply transmission pacing to avoid network congestion
+    fragment_interval = calculate_fragment_interval(len(fragments))
+    
+    for fragment in fragments:
+        send_packet(fragment)
+        
+        # Add inter-fragment delay for pacing
+        if fragment != fragments[-1]:  # Don't delay after last fragment
+            wait(fragment_interval)
+    
+    # Set fragment reassembly timeout
+    fragment_timeout = get_current_time_ms() + FRAGMENT_TIMEOUT_MS
+    track_fragment_transmission(fragments[0].fragment_id, fragment_timeout)
+
+function calculate_fragment_interval(fragment_count):
+    # Calculate optimal inter-fragment delay based on network conditions
+    base_interval = max(1, HOP_INTERVAL_MS / 10)  # Fraction of hop interval
+    congestion_factor = session_state.congestion_window / INITIAL_CONGESTION_WINDOW
+    
+    return base_interval / congestion_factor
+```
+
+### Fragment Reception and Reassembly
+
+```pseudocode
+function handle_fragment_reception(fragment_packet):
+    fragment_header = parse_fragment_header(fragment_packet)
+    fragment_id = fragment_header.fragment_id
+    
+    # Validate fragment
+    if not validate_fragment(fragment_packet, fragment_header):
+        return ERROR_FRAGMENT_INVALID
+    
+    # Check for duplicate fragment
+    if is_duplicate_fragment(fragment_id, fragment_header.fragment_index):
+        log_duplicate_fragment(fragment_id, fragment_header.fragment_index)
+        return SUCCESS  # Ignore duplicate
+    
+    # Get or create reassembly buffer
+    reassembly_buffer = get_reassembly_buffer(fragment_id)
+    if reassembly_buffer == null:
+        reassembly_buffer = create_reassembly_buffer(
+            fragment_id = fragment_id,
+            total_fragments = fragment_header.total_fragments,
+            timeout = get_current_time_ms() + FRAGMENT_TIMEOUT_MS
+        )
+    
+    # Store fragment in reassembly buffer
+    reassembly_buffer.fragments[fragment_header.fragment_index] = fragment_packet
+    reassembly_buffer.received_count += 1
+    
+    # Update reassembly timeout
+    reassembly_buffer.timeout = get_current_time_ms() + FRAGMENT_TIMEOUT_MS
+    
+    # Check if reassembly is complete
+    if reassembly_buffer.received_count == fragment_header.total_fragments:
+        return complete_fragment_reassembly(reassembly_buffer)
+    
+    return SUCCESS
+
+function validate_fragment(fragment_packet, fragment_header):
+    # Validate fragment index
+    if fragment_header.fragment_index >= fragment_header.total_fragments:
+        return false
+    
+    # Validate total fragments count
+    if fragment_header.total_fragments == 0 or fragment_header.total_fragments > MAX_FRAGMENTS:
+        return false
+    
+    # Validate fragment payload size
+    if fragment_header.fragment_payload_size == 0 or fragment_header.fragment_payload_size > MAX_FRAGMENT_SIZE:
+        return false
+    
+    # Additional security validation
+    if not validate_fragment_security(fragment_packet, fragment_header):
+        return false
+    
+    return true
+
+function complete_fragment_reassembly(reassembly_buffer):
+    # Validate all fragments are present
+    for i in range(reassembly_buffer.total_fragments):
+        if reassembly_buffer.fragments[i] == null:
+            return ERROR_FRAGMENT_MISSING
+    
+    # Reassemble original packet
+    reassembled_payload = b''
+    for i in range(reassembly_buffer.total_fragments):
+        fragment = reassembly_buffer.fragments[i]
+        fragment_header = parse_fragment_header(fragment)
+        fragment_payload = extract_fragment_payload(fragment, fragment_header)
+        reassembled_payload += fragment_payload
+    
+    # Create reassembled packet
+    original_packet = create_packet(
+        type = determine_original_packet_type(reassembly_buffer),
+        session_id = reassembly_buffer.fragments[0].session_id,
+        sequence_number = reassembly_buffer.fragments[0].sequence_number,
+        payload = reassembled_payload
+    )
+    
+    # Validate reassembled packet
+    if not validate_reassembled_packet(original_packet):
+        cleanup_reassembly_buffer(reassembly_buffer)
+        return ERROR_FRAGMENT_REASSEMBLY_INVALID
+    
+    # Cleanup reassembly buffer
+    cleanup_reassembly_buffer(reassembly_buffer)
+    
+    # Process reassembled packet
+    return process_packet(original_packet)
+```
+
+### Fragment Timeout and Cleanup
+
+```pseudocode
+function cleanup_expired_fragments():
+    current_time = get_current_time_ms()
+    expired_buffers = []
+    
+    for fragment_id, buffer in session_state.reassembly_buffers.items():
+        if current_time > buffer.timeout:
+            expired_buffers.append(fragment_id)
+    
+    for fragment_id in expired_buffers:
+        buffer = session_state.reassembly_buffers[fragment_id]
+        log_fragment_timeout(fragment_id, buffer.received_count, buffer.total_fragments)
+        
+        # Request retransmission if we have some fragments
+        if buffer.received_count > 0:
+            request_fragment_retransmission(fragment_id, buffer)
+        
+        cleanup_reassembly_buffer(buffer)
+        del session_state.reassembly_buffers[fragment_id]
+
+function request_fragment_retransmission(fragment_id, buffer):
+    # Create bitmap of missing fragments
+    missing_fragments = []
+    for i in range(buffer.total_fragments):
+        if buffer.fragments[i] == null:
+            missing_fragments.append(i)
+    
+    # Send retransmission request
+    retrans_request = create_fragment_retrans_request(
+        fragment_id = fragment_id,
+        missing_fragments = missing_fragments
+    )
+    
+    send_packet(retrans_request)
+
+function cleanup_reassembly_buffer(buffer):
+    # Secure cleanup of fragment data
+    for fragment in buffer.fragments:
+        if fragment != null:
+            secure_zero_packet_data(fragment)
+    
+    secure_zero_memory(buffer)
+```
+
+### Fragment Security Considerations
+
+```pseudocode
+function validate_fragment_security(fragment_packet, fragment_header):
+    # Prevent fragment overlap attacks
+    if detect_fragment_overlap(fragment_header):
+        log_security_event("Fragment overlap attack detected")
+        return false
+    
+    # Prevent fragment bomb attacks
+    if fragment_header.total_fragments > MAX_FRAGMENTS:
+        log_security_event("Fragment bomb attack detected")
+        return false
+    
+    # Validate fragment ordering
+    if not validate_fragment_ordering(fragment_header):
+        log_security_event("Fragment ordering attack detected")
+        return false
+    
+    return true
+
+function detect_fragment_overlap(fragment_header):
+    # Check if fragment overlaps with existing fragments in buffer
+    reassembly_buffer = get_reassembly_buffer(fragment_header.fragment_id)
+    if reassembly_buffer == null:
+        return false
+    
+    # Fragment overlap detection logic
+    existing_fragment = reassembly_buffer.fragments[fragment_header.fragment_index]
+    if existing_fragment != null:
+        # Same index already exists - potential overlap
+        return true
+    
+    return false
+```
+
+## Flow Control Specification
+
+### Flow Control Overview
+
+The protocol implements TCP-compatible flow control over the stateless datagram transport, ensuring reliable data delivery while preventing buffer overflow at receivers.
+
+### Flow Control State Management
+
+```pseudocode
+# Flow control state variables
+flow_control_state = {
+    'send_window': INITIAL_SEND_WINDOW,
+    'receive_window': INITIAL_RECEIVE_WINDOW,
+    'send_buffer': [],
+    'receive_buffer': [],
+    'send_next': 0,
+    'send_unacked': 0,
+    'receive_next': 0,
+    'advertised_window': INITIAL_RECEIVE_WINDOW,
+    'last_window_update': 0,
+    'zero_window_probe_timer': 0
+}
+
+function initialize_flow_control():
+    flow_control_state.send_window = min(INITIAL_SEND_WINDOW, peer_advertised_window)
+    flow_control_state.receive_window = INITIAL_RECEIVE_WINDOW
+    flow_control_state.send_next = session_state.local_sequence
+    flow_control_state.send_unacked = session_state.local_sequence
+    flow_control_state.receive_next = session_state.peer_sequence
+```
+
+### Send Window Management
+
+```pseudocode
+function can_send_data(data_length):
+    # Check if we can send data within current window
+    bytes_in_flight = flow_control_state.send_next - flow_control_state.send_unacked
+    available_window = flow_control_state.send_window - bytes_in_flight
+    
+    return data_length <= available_window
+
+function send_data_with_flow_control(data):
+    if not can_send_data(len(data)):
+        # Buffer data for later transmission
+        add_to_send_buffer(data)
+        return SUCCESS
+    
+    # Create data packet
+    data_packet = create_data_packet(
+        sequence_number = flow_control_state.send_next,
+        data = data,
+        window_size = flow_control_state.advertised_window
+    )
+    
+    # Update send state
+    flow_control_state.send_next += len(data)
+    
+    # Send packet
+    send_packet(data_packet)
+    
+    # Set retransmission timer
+    set_retransmission_timer(data_packet)
+    
+    return SUCCESS
+
+function update_send_window(ack_packet):
+    # Update based on acknowledgment
+    acked_bytes = ack_packet.acknowledgment_number - flow_control_state.send_unacked
+    
+    if acked_bytes > 0:
+        flow_control_state.send_unacked = ack_packet.acknowledgment_number
+        
+        # Remove acknowledged data from send buffer
+        remove_acknowledged_data(acked_bytes)
+        
+        # Send any buffered data that now fits in window
+        attempt_send_buffered_data()
+    
+    # Update window size from peer advertisement
+    flow_control_state.send_window = ack_packet.window_size
+    
+    # Handle zero window condition
+    if flow_control_state.send_window == 0:
+        start_zero_window_probing()
+    else:
+        stop_zero_window_probing()
+```
+
+### Receive Window Management
+
+```pseudocode
+function process_received_data(data_packet):
+    sequence_number = data_packet.sequence_number
+    data_length = len(data_packet.data)
+    
+    # Check if packet is within receive window
+    if not is_within_receive_window(sequence_number, data_length):
+        # Send duplicate ACK
+        send_duplicate_ack()
+        return SUCCESS
+    
+    # Handle in-order data
+    if sequence_number == flow_control_state.receive_next:
+        # Deliver data to application
+        deliver_to_application(data_packet.data)
+        flow_control_state.receive_next += data_length
+        
+        # Process any buffered in-order data
+        process_buffered_data()
+        
+        # Update receive window
+        update_receive_window(data_length)
+        
+        # Send acknowledgment
+        send_acknowledgment()
+        
+    else:
+        # Out-of-order data - buffer it
+        buffer_out_of_order_data(data_packet)
+        
+        # Send selective acknowledgment
+        send_selective_acknowledgment()
+    
+    return SUCCESS
+
+function is_within_receive_window(sequence_number, data_length):
+    window_start = flow_control_state.receive_next
+    window_end = window_start + flow_control_state.receive_window
+    
+    return (sequence_number >= window_start and 
+            sequence_number + data_length <= window_end)
+
+function update_receive_window(consumed_bytes):
+    # Calculate new available window space
+    buffer_space_used = calculate_buffer_space_used()
+    max_buffer_space = MAX_RECEIVE_BUFFER_SIZE
+    available_space = max_buffer_space - buffer_space_used
+    
+    # Update advertised window
+    flow_control_state.advertised_window = min(available_space, MAX_RECEIVE_WINDOW)
+    
+    # Send window update if significant change
+    window_change_threshold = flow_control_state.receive_window * WINDOW_UPDATE_THRESHOLD
+    if abs(flow_control_state.advertised_window - flow_control_state.last_advertised_window) > window_change_threshold:
+        send_window_update()
+        flow_control_state.last_advertised_window = flow_control_state.advertised_window
+```
+
+### Zero Window Handling
+
+```pseudocode
+function start_zero_window_probing():
+    if flow_control_state.zero_window_probe_timer == 0:
+        flow_control_state.zero_window_probe_timer = get_current_time_ms() + ZERO_WINDOW_PROBE_INTERVAL_MS
+        schedule_zero_window_probe()
+
+function send_zero_window_probe():
+    # Send 1-byte probe packet
+    probe_data = get_next_byte_to_send()
+    if probe_data != null:
+        probe_packet = create_data_packet(
+            sequence_number = flow_control_state.send_next,
+            data = probe_data,
+            window_size = flow_control_state.advertised_window
+        )
+        
+        send_packet(probe_packet)
+        
+        # Schedule next probe
+        flow_control_state.zero_window_probe_timer = get_current_time_ms() + ZERO_WINDOW_PROBE_INTERVAL_MS
+        schedule_zero_window_probe()
+
+function stop_zero_window_probing():
+    flow_control_state.zero_window_probe_timer = 0
+    cancel_zero_window_probe()
+```
+
+### Selective Acknowledgment (SACK)
+
+```pseudocode
+function send_selective_acknowledgment():
+    # Build SACK bitmap for out-of-order received data
+    sack_bitmap = build_sack_bitmap()
+    
+    ack_packet = create_ack_packet(
+        acknowledgment_number = flow_control_state.receive_next,
+        window_size = flow_control_state.advertised_window,
+        selective_ack_bitmap = sack_bitmap
+    )
+    
+    send_packet(ack_packet)
+
+function build_sack_bitmap():
+    bitmap = 0
+    bitmap_size = 32  # 32-bit bitmap
+    
+    for i in range(bitmap_size):
+        sequence_to_check = flow_control_state.receive_next + i + 1
+        if is_sequence_received(sequence_to_check):
+            bitmap |= (1 << i)
+    
+    return bitmap
+
+function process_selective_acknowledgment(ack_packet):
+    sack_bitmap = ack_packet.selective_ack_bitmap
+    base_sequence = ack_packet.acknowledgment_number
+    
+    # Process SACK information
+    for i in range(32):
+        if sack_bitmap & (1 << i):
+            acked_sequence = base_sequence + i + 1
+            mark_sequence_acknowledged(acked_sequence)
+    
+    # Retransmit missing segments
+    retransmit_missing_segments(base_sequence, sack_bitmap)
+```
+
+### Flow Control Integration with Congestion Control
+
+```pseudocode
+function calculate_effective_window():
+    # Effective window is minimum of congestion window and flow control window
+    congestion_window = session_state.congestion_window
+    flow_control_window = flow_control_state.send_window
+    
+    return min(congestion_window, flow_control_window)
+
+function adjust_transmission_rate():
+    effective_window = calculate_effective_window()
+    bytes_in_flight = flow_control_state.send_next - flow_control_state.send_unacked
+    
+    if bytes_in_flight >= effective_window:
+        # Stop sending until window opens
+        pause_transmission()
+    else:
+        # Calculate how much we can send
+        can_send = effective_window - bytes_in_flight
+        resume_transmission(can_send)
+
+function handle_window_timeout():
+    # Handle case where no window updates received
+    current_time = get_current_time_ms()
+    
+    if current_time - flow_control_state.last_window_update > WINDOW_TIMEOUT_MS:
+        # Window timeout - probe peer
+        send_window_probe()
+        
+        # Reduce congestion window to prevent overwhelming peer
+        session_state.congestion_window = max(
+            session_state.congestion_window / 2,
+            MIN_CONGESTION_WINDOW
+        )
+```
+
+### Buffer Management
+
+```pseudocode
+function manage_send_buffer():
+    # Limit send buffer size to prevent memory exhaustion
+    if len(flow_control_state.send_buffer) > MAX_SEND_BUFFER_SIZE:
+        # Apply back-pressure to application
+        return ERROR_SEND_BUFFER_FULL
+    
+    return SUCCESS
+
+function manage_receive_buffer():
+    # Clean up old out-of-order data
+    current_time = get_current_time_ms()
+    
+    for buffered_packet in flow_control_state.receive_buffer:
+        if current_time - buffered_packet.timestamp > REORDER_TIMEOUT_MS:
+            remove_from_receive_buffer(buffered_packet)
+    
+    # Enforce buffer size limits
+    if len(flow_control_state.receive_buffer) > MAX_RECEIVE_BUFFER_SIZE:
+        # Remove oldest out-of-order packets
+        remove_oldest_buffered_packets()
+
+function calculate_buffer_space_used():
+    send_buffer_usage = sum(len(packet.data) for packet in flow_control_state.send_buffer)
+    receive_buffer_usage = sum(len(packet.data) for packet in flow_control_state.receive_buffer)
+    
+    return send_buffer_usage + receive_buffer_usage
+```
+
+## Complete Time Synchronization Specification
+
+### Time Synchronization Overview
+
+The protocol requires precise time synchronization between peers to maintain synchronized port hopping. The time synchronization system handles clock drift, leap seconds, network delay, and provides gradual adjustment mechanisms to prevent port hopping disruption.
+
+### Time Synchronization Constants
+
+```pseudocode
+// Time synchronization constants
+TIME_SYNC_PRECISION_MS = 10              // Required synchronization precision
+TIME_SYNC_SAMPLE_COUNT = 8               // Number of samples for drift calculation
+TIME_SYNC_ADJUSTMENT_RATE = 0.1          // Gradual adjustment rate (10% per hop)
+MAX_TIME_ADJUSTMENT_PER_HOP = 25         // Maximum adjustment per hop interval (25ms)
+LEAP_SECOND_WINDOW_MS = 2000             // Window around leap second events
+CLOCK_SKEW_DETECTION_THRESHOLD = 100     // Clock skew detection threshold (100ms)
+TIME_SYNC_HISTORY_SIZE = 16              // Number of historical sync measurements
+DRIFT_CALCULATION_WINDOW = 300000        // Drift calculation window (5 minutes)
+MAX_ACCEPTABLE_DRIFT_PPM = 100           // Maximum acceptable drift (100 ppm)
+TIME_SYNC_EMERGENCY_THRESHOLD = 1000     // Emergency sync threshold (1 second)
+
+// Time synchronization states
+TIME_SYNC_STATE_SYNCHRONIZED = 0         // Clocks are synchronized
+TIME_SYNC_STATE_ADJUSTING = 1            // Gradual adjustment in progress
+TIME_SYNC_STATE_EMERGENCY = 2            // Emergency synchronization needed
+TIME_SYNC_STATE_FAILED = 3               // Synchronization failed
+```
+
+### Time Synchronization State Management
+
+```pseudocode
+// Time synchronization state
+time_sync_state = {
+    'current_state': TIME_SYNC_STATE_SYNCHRONIZED,
+    'local_offset': 0,                   // Local time offset in milliseconds
+    'peer_offset': 0,                    // Peer time offset in milliseconds
+    'drift_rate': 0.0,                   // Clock drift rate (ppm)
+    'last_sync_time': 0,                 // Last successful synchronization
+    'sync_samples': [],                  // Historical sync measurements
+    'adjustment_queue': [],              // Pending time adjustments
+    'emergency_sync_attempts': 0,        // Emergency sync attempt counter
+    'leap_second_pending': false,        // Leap second event pending
+    'sync_quality': 100                  // Synchronization quality (0-100)
+}
+
+function initialize_time_synchronization():
+    time_sync_state.current_state = TIME_SYNC_STATE_SYNCHRONIZED
+    time_sync_state.local_offset = 0
+    time_sync_state.peer_offset = 0
+    time_sync_state.drift_rate = 0.0
+    time_sync_state.last_sync_time = get_current_time_ms()
+    time_sync_state.sync_samples = []
+    time_sync_state.adjustment_queue = []
+    time_sync_state.emergency_sync_attempts = 0
+    time_sync_state.sync_quality = 100
+```
+
+### Precision Time Synchronization Algorithm
+
+```pseudocode
+function execute_precision_time_sync():
+    # Multi-sample time synchronization with network delay compensation
+    sync_samples = []
+    
+    for sample_index in range(TIME_SYNC_SAMPLE_COUNT):
+        sample = perform_single_time_sync()
+        if sample != null:
+            sync_samples.append(sample)
+        
+        # Wait between samples to get varied network conditions
+        wait(HOP_INTERVAL_MS / TIME_SYNC_SAMPLE_COUNT)
+    
+    if len(sync_samples) < TIME_SYNC_SAMPLE_COUNT / 2:
+        return ERROR_TIME_SYNC_INSUFFICIENT_SAMPLES
+    
+    # Calculate best time offset estimate
+    time_offset = calculate_optimal_time_offset(sync_samples)
+    network_delay = calculate_network_delay(sync_samples)
+    sync_quality = calculate_sync_quality(sync_samples)
+    
+    # Validate synchronization quality
+    if sync_quality < 50:  # Quality threshold
+        return ERROR_TIME_SYNC_POOR_QUALITY
+    
+    # Apply gradual time adjustment
+    if abs(time_offset) > TIME_SYNC_EMERGENCY_THRESHOLD:
+        return initiate_emergency_time_sync(time_offset)
+    else:
+        return apply_gradual_time_adjustment(time_offset, sync_quality)
+
+function perform_single_time_sync():
+    # High-precision single time sync measurement
+    challenge_nonce = generate_secure_random_32bit()
+    
+    # Record precise send time
+    t1 = get_high_precision_time_us()  # Microsecond precision
+    
+    sync_request = create_time_sync_request(
+        challenge_nonce = challenge_nonce,
+        local_timestamp = t1 / 1000,  # Convert to milliseconds
+        precision_timestamp = t1      # Keep microsecond precision
+    )
+    
+    send_packet(sync_request)
+    
+    # Receive response with timeout
+    sync_response = receive_packet_timeout(TIME_RESYNC_TIMEOUT_MS)
+    t4 = get_high_precision_time_us()
+    
+    if sync_response == null or sync_response.challenge_nonce != challenge_nonce:
+        return null
+    
+    # Extract peer timestamps
+    t2 = sync_response.peer_receive_timestamp * 1000  # Peer receive time (us)
+    t3 = sync_response.peer_send_timestamp * 1000     # Peer send time (us)
+    
+    # Calculate network delay and time offset using NTP algorithm
+    network_delay = ((t4 - t1) - (t3 - t2)) / 2
+    time_offset = ((t2 - t1) + (t3 - t4)) / 2
+    
+    return {
+        'time_offset': time_offset / 1000,  # Convert back to milliseconds
+        'network_delay': network_delay / 1000,
+        'round_trip_time': (t4 - t1) / 1000,
+        'timestamp': t1 / 1000,
+        'quality': calculate_sample_quality(network_delay, t4 - t1)
+    }
+
+function calculate_optimal_time_offset(sync_samples):
+    # Use weighted average based on sample quality and network delay
+    total_weight = 0
+    weighted_offset = 0
+    
+    for sample in sync_samples:
+        # Weight based on quality and inverse of network delay
+        weight = sample.quality / (1 + sample.network_delay)
+        weighted_offset += sample.time_offset * weight
+        total_weight += weight
+    
+    if total_weight == 0:
+        return 0
+    
+    return weighted_offset / total_weight
+
+function calculate_sync_quality(sync_samples):
+    # Calculate synchronization quality based on sample consistency
+    if len(sync_samples) < 2:
+        return 0
+    
+    offsets = [sample.time_offset for sample in sync_samples]
+    mean_offset = sum(offsets) / len(offsets)
+    variance = sum((offset - mean_offset) ** 2 for offset in offsets) / len(offsets)
+    standard_deviation = math.sqrt(variance)
+    
+    # Quality decreases with variance and network delay
+    base_quality = max(0, 100 - (standard_deviation * 10))
+    avg_delay = sum(sample.network_delay for sample in sync_samples) / len(sync_samples)
+    delay_penalty = min(50, avg_delay)
+    
+    return max(0, base_quality - delay_penalty)
+```
+
+### Gradual Time Adjustment System
+
+```pseudocode
+function apply_gradual_time_adjustment(total_offset, sync_quality):
+    # Apply time adjustment gradually to prevent port hopping disruption
+    if abs(total_offset) < TIME_SYNC_PRECISION_MS:
+        # Already synchronized
+        update_sync_state(total_offset, sync_quality)
+        return SUCCESS
+    
+    # Calculate adjustment schedule
+    adjustment_steps = calculate_adjustment_steps(total_offset)
+    step_size = total_offset / adjustment_steps
+    
+    # Queue gradual adjustments
+    for step in range(adjustment_steps):
+        adjustment = {
+            'offset': step_size,
+            'apply_time': get_current_time_ms() + (step * HOP_INTERVAL_MS),
+            'step_number': step + 1,
+            'total_steps': adjustment_steps
+        }
+        time_sync_state.adjustment_queue.append(adjustment)
+    
+    time_sync_state.current_state = TIME_SYNC_STATE_ADJUSTING
+    return SUCCESS
+
+function calculate_adjustment_steps(total_offset):
+    # Calculate number of steps needed for gradual adjustment
+    max_step_size = min(MAX_TIME_ADJUSTMENT_PER_HOP, abs(total_offset) * TIME_SYNC_ADJUSTMENT_RATE)
+    steps = max(1, math.ceil(abs(total_offset) / max_step_size))
+    
+    # Ensure adjustment completes within reasonable time
+    max_steps = DRIFT_CALCULATION_WINDOW / HOP_INTERVAL_MS / 4  # Complete within 1/4 of drift window
+    return min(steps, max_steps)
+
+function process_time_adjustments():
+    # Process pending time adjustments on each hop interval
+    current_time = get_current_time_ms()
+    applied_adjustments = []
+    
+    for adjustment in time_sync_state.adjustment_queue:
+        if current_time >= adjustment.apply_time:
+            # Apply time adjustment
+            time_sync_state.local_offset += adjustment.offset
+            applied_adjustments.append(adjustment)
+            
+            # Log adjustment progress
+            log_time_adjustment(adjustment.step_number, adjustment.total_steps, adjustment.offset)
+    
+    # Remove applied adjustments
+    for adjustment in applied_adjustments:
+        time_sync_state.adjustment_queue.remove(adjustment)
+    
+    # Check if adjustment is complete
+    if len(time_sync_state.adjustment_queue) == 0 and time_sync_state.current_state == TIME_SYNC_STATE_ADJUSTING:
+        time_sync_state.current_state = TIME_SYNC_STATE_SYNCHRONIZED
+        validate_time_synchronization()
+
+function get_synchronized_time():
+    # Get current time with synchronization offset applied
+    local_time = get_current_time_ms()
+    return local_time + time_sync_state.local_offset
+```
+
+### Clock Drift Detection and Compensation
+
+```pseudocode
+function detect_clock_drift():
+    # Detect systematic clock drift over time
+    if len(time_sync_state.sync_samples) < 3:
+        return 0.0  # Insufficient data for drift calculation
+    
+    # Calculate drift rate using linear regression
+    recent_samples = time_sync_state.sync_samples[-TIME_SYNC_HISTORY_SIZE:]
+    
+    # Extract time and offset pairs
+    time_points = [sample.timestamp for sample in recent_samples]
+    offset_points = [sample.time_offset for sample in recent_samples]
+    
+    # Calculate drift rate (milliseconds per millisecond = ppm)
+    drift_rate = calculate_linear_regression_slope(time_points, offset_points)
+    
+    # Convert to parts per million
+    drift_ppm = drift_rate * 1000000
+    
+    # Update drift state
+    time_sync_state.drift_rate = drift_ppm
+    
+    return drift_ppm
+
+function compensate_clock_drift():
+    # Apply drift compensation to time calculations
+    if abs(time_sync_state.drift_rate) < 1.0:  # Ignore very small drift
+        return
+    
+    current_time = get_current_time_ms()
+    time_since_last_sync = current_time - time_sync_state.last_sync_time
+    
+    # Calculate accumulated drift
+    drift_ms = (time_since_last_sync * time_sync_state.drift_rate) / 1000000
+    
+    # Apply drift compensation
+    if abs(drift_ms) > TIME_SYNC_PRECISION_MS:
+        time_sync_state.local_offset -= drift_ms
+        time_sync_state.last_sync_time = current_time
+
+function calculate_linear_regression_slope(x_values, y_values):
+    # Calculate slope of linear regression line
+    n = len(x_values)
+    if n < 2:
+        return 0.0
+    
+    sum_x = sum(x_values)
+    sum_y = sum(y_values)
+    sum_xy = sum(x * y for x, y in zip(x_values, y_values))
+    sum_x2 = sum(x * x for x in x_values)
+    
+    denominator = n * sum_x2 - sum_x * sum_x
+    if denominator == 0:
+        return 0.0
+    
+    slope = (n * sum_xy - sum_x * sum_y) / denominator
+    return slope
+```
+
+### Leap Second Handling
+
+```pseudocode
+function handle_leap_second_event():
+    # Handle leap second insertion/deletion
+    leap_second_info = get_leap_second_schedule()
+    
+    if leap_second_info == null:
+        return SUCCESS
+    
+    current_time = get_current_time_ms()
+    leap_second_time = leap_second_info.event_time
+    
+    # Check if leap second is imminent
+    if abs(current_time - leap_second_time) < LEAP_SECOND_WINDOW_MS:
+        time_sync_state.leap_second_pending = true
+        
+        # Pause time adjustments during leap second window
+        pause_time_adjustments()
+        
+        # Increase synchronization frequency
+        schedule_frequent_time_sync()
+        
+        return SUCCESS
+    
+    # Check if leap second has occurred
+    if time_sync_state.leap_second_pending and current_time > leap_second_time + LEAP_SECOND_WINDOW_MS:
+        time_sync_state.leap_second_pending = false
+        
+        # Resume normal time synchronization
+        resume_normal_time_sync()
+        
+        # Force immediate resynchronization
+        return execute_precision_time_sync()
+    
+    return SUCCESS
+
+function pause_time_adjustments():
+    # Temporarily pause time adjustments during leap second
+    for adjustment in time_sync_state.adjustment_queue:
+        adjustment.paused = true
+
+function resume_normal_time_sync():
+    # Resume normal time synchronization after leap second
+    for adjustment in time_sync_state.adjustment_queue:
+        if hasattr(adjustment, 'paused'):
+            delattr(adjustment, 'paused')
+```
+
+### Emergency Time Synchronization
+
+```pseudocode
+function initiate_emergency_time_sync(large_offset):
+    # Handle large time discrepancies that require immediate correction
+    time_sync_state.current_state = TIME_SYNC_STATE_EMERGENCY
+    time_sync_state.emergency_sync_attempts += 1
+    
+    if time_sync_state.emergency_sync_attempts > MAX_EMERGENCY_SYNC_ATTEMPTS:
+        return ERROR_TIME_SYNC_EMERGENCY_FAILED
+    
+    # Perform multiple high-precision measurements
+    emergency_samples = []
+    for i in range(TIME_SYNC_SAMPLE_COUNT * 2):  # Double sample count for emergency
+        sample = perform_single_time_sync()
+        if sample != null:
+            emergency_samples.append(sample)
+        wait(HOP_INTERVAL_MS / 4)  # Faster sampling
+    
+    if len(emergency_samples) < TIME_SYNC_SAMPLE_COUNT:
+        return ERROR_TIME_SYNC_EMERGENCY_INSUFFICIENT_SAMPLES
+    
+    # Calculate emergency offset with high confidence
+    emergency_offset = calculate_optimal_time_offset(emergency_samples)
+    sync_quality = calculate_sync_quality(emergency_samples)
+    
+    if sync_quality < 75:  # Higher threshold for emergency sync
+        return ERROR_TIME_SYNC_EMERGENCY_POOR_QUALITY
+    
+    # Apply immediate offset correction
+    if abs(emergency_offset) > TIME_SYNC_EMERGENCY_THRESHOLD:
+        # Offset still too large - session may be compromised
+        log_emergency_sync_failure(emergency_offset)
+        return ERROR_TIME_SYNC_EMERGENCY_OFFSET_TOO_LARGE
+    
+    # Apply emergency offset immediately
+    time_sync_state.local_offset += emergency_offset
+    time_sync_state.current_state = TIME_SYNC_STATE_SYNCHRONIZED
+    time_sync_state.emergency_sync_attempts = 0
+    
+    # Verify emergency synchronization
+    return verify_emergency_synchronization()
+
+function verify_emergency_synchronization():
+    # Verify emergency synchronization was successful
+    verification_sample = perform_single_time_sync()
+    
+    if verification_sample == null:
+        return ERROR_TIME_SYNC_VERIFICATION_FAILED
+    
+    if abs(verification_sample.time_offset) > TIME_SYNC_PRECISION_MS:
+        return ERROR_TIME_SYNC_VERIFICATION_OFFSET_TOO_LARGE
+    
+    log_emergency_sync_success(verification_sample.time_offset)
+    return SUCCESS
+```
+
+## Port Transition Protocols for Connection Scenarios
+
+### Port Transition Overview
+
+The protocol defines precise port transition behaviors for various connection scenarios including single connections, multiple parallel connections, connection recovery, and synchronized transitions.
+
+### Port Transition Constants
+
+```pseudocode
+// Port transition constants
+PORT_TRANSITION_WINDOW_MS = 50           // Time window for port transitions
+PORT_LISTEN_OVERLAP_MS = 100             // Overlap time for listening on multiple ports
+MAX_CONCURRENT_PORTS = 9                 // Maximum ports to listen on simultaneously
+PORT_TRANSITION_RETRY_ATTEMPTS = 3       // Retry attempts for failed transitions
+PORT_BLACKLIST_DURATION_MS = 300000      // Duration to blacklist problematic ports
+PORT_VALIDATION_TIMEOUT_MS = 500         // Timeout for port validation
+CONNECTION_PORT_SEPARATION = 16          // Minimum port separation between connections
+
+// Port transition states
+PORT_STATE_ACTIVE = 0                    // Port is actively in use
+PORT_STATE_TRANSITIONING = 1             // Port transition in progress
+PORT_STATE_STANDBY = 2                   // Port on standby for transition
+PORT_STATE_BLACKLISTED = 3               // Port temporarily unavailable
+```
+
+### Single Connection Port Transition
+
+```pseudocode
+function execute_single_connection_port_transition():
+    # Standard port transition for single connection
+    current_time_window = get_current_time_window()
+    
+    # Calculate new port
+    new_port = calculate_port_with_offset(
+        daily_key = session_state.daily_key,
+        session_id = session_state.session_id,
+        time_window = current_time_window + 1,
+        src_endpoint = local_endpoint,
+        dst_endpoint = remote_endpoint,
+        connection_id = session_state.connection_id
+    )
+    
+    # Validate new port
+    if not validate_port_transition(new_port):
+        return handle_port_transition_failure()
+    
+    # Begin transition process
+    transition_start_time = get_current_time_ms()
+    
+    # Phase 1: Start listening on new port
+    if not start_listening_on_port(new_port):
+        return ERROR_PORT_TRANSITION_LISTEN_FAILED
+    
+    # Phase 2: Continue using current port until transition window
+    continue_using_current_port_until(transition_start_time + PORT_TRANSITION_WINDOW_MS)
+    
+    # Phase 3: Switch to new port
+    return complete_port_transition(new_port)
+
+function validate_port_transition(new_port):
+    # Validate new port is suitable for transition
+    if new_port < MIN_PORT or new_port > MAX_PORT:
+        return false
+    
+    # Check if port is blacklisted
+    if is_port_blacklisted(new_port):
+        return false
+    
+    # Check if port is available
+    if not is_port_available(new_port):
+        return false
+    
+    # Verify port calculation
+    expected_port = recalculate_port_for_verification(new_port)
+    if new_port != expected_port:
+        return false
+    
+    return true
+
+function complete_port_transition(new_port):
+    # Complete transition to new port
+    old_port = session_state.current_port
+    
+    # Update session state
+    session_state.current_port = new_port
+    session_state.port_history.append(old_port)
+    
+    # Maintain port history size
+    if len(session_state.port_history) > PORT_HISTORY_SIZE:
+        session_state.port_history.pop(0)
+    
+    # Stop listening on old port after overlap period
+    schedule_port_cleanup(old_port, PORT_LISTEN_OVERLAP_MS)
+    
+    # Verify transition success
+    return verify_port_transition_success(new_port)
+```
+
+### Multiple Connection Port Coordination
+
+```pseudocode
+function coordinate_multiple_connection_transitions():
+    # Coordinate port transitions for multiple parallel connections
+    active_connections = get_active_connections_for_endpoint_pair()
+    
+    if len(active_connections) <= 1:
+        return execute_single_connection_port_transition()
+    
+    # Calculate new ports for all connections
+    transition_plan = create_multi_connection_transition_plan(active_connections)
+    
+    if not validate_multi_connection_plan(transition_plan):
+        return handle_multi_connection_transition_failure(active_connections)
+    
+    # Execute coordinated transition
+    return execute_coordinated_transition(transition_plan)
+
+function create_multi_connection_transition_plan(connections):
+    # Create transition plan ensuring no port conflicts
+    next_time_window = get_current_time_window() + 1
+    transition_plan = []
+    used_ports = set()
+    
+    for connection in connections:
+        # Calculate new port for this connection
+        new_port = calculate_port_with_offset(
+            daily_key = connection.daily_key,
+            session_id = connection.session_id,
+            time_window = next_time_window,
+            src_endpoint = connection.local_endpoint,
+            dst_endpoint = connection.remote_endpoint,
+            connection_id = connection.connection_id
+        )
+        
+        # Handle port collision
+        while new_port in used_ports:
+            new_port = resolve_port_collision(connection, new_port, used_ports)
+            if new_port == null:
+                return null  # Failed to resolve collision
+        
+        used_ports.add(new_port)
+        
+        transition_plan.append({
+            'connection_id': connection.connection_id,
+            'old_port': connection.current_port,
+            'new_port': new_port,
+            'transition_priority': calculate_transition_priority(connection)
+        })
+    
+    # Sort by priority to handle critical connections first
+    transition_plan.sort(key=lambda x: x.transition_priority, reverse=True)
+    
+    return transition_plan
+
+function resolve_port_collision(connection, colliding_port, used_ports):
+    # Resolve port collision by finding alternative port
+    max_attempts = 100
+    
+    for attempt in range(max_attempts):
+        # Try adjacent ports with small offset
+        offset = (attempt + 1) * CONNECTION_PORT_SEPARATION
+        alternative_port = (colliding_port + offset) % PORT_RANGE + MIN_PORT
+        
+        if alternative_port not in used_ports and validate_port_transition(alternative_port):
+            return alternative_port
+    
+    # Failed to find alternative port
+    return null
+
+function execute_coordinated_transition(transition_plan):
+    # Execute coordinated port transitions for multiple connections
+    transition_start_time = get_current_time_ms()
+    successful_transitions = []
+    failed_transitions = []
+    
+    # Phase 1: Start listening on all new ports
+    for plan_item in transition_plan:
+        if start_listening_on_port(plan_item.new_port):
+            successful_transitions.append(plan_item)
+        else:
+            failed_transitions.append(plan_item)
+    
+    if len(failed_transitions) > 0:
+        # Rollback successful transitions
+        for plan_item in successful_transitions:
+            stop_listening_on_port(plan_item.new_port)
+        return handle_coordinated_transition_failure(failed_transitions)
+    
+    # Phase 2: Wait for transition window
+    wait_until(transition_start_time + PORT_TRANSITION_WINDOW_MS)
+    
+    # Phase 3: Switch all connections to new ports
+    for plan_item in transition_plan:
+        connection = get_connection_by_id(plan_item.connection_id)
+        connection.current_port = plan_item.new_port
+        schedule_port_cleanup(plan_item.old_port, PORT_LISTEN_OVERLAP_MS)
+    
+    return SUCCESS
+```
+
+### Connection Recovery Port Synchronization
+
+```pseudocode
+function synchronize_ports_during_recovery(recovery_session_id):
+    # Synchronize port calculation during connection recovery
+    recovery_connection = get_recovery_connection(recovery_session_id)
+    
+    if recovery_connection == null:
+        return ERROR_RECOVERY_CONNECTION_NOT_FOUND
+    
+    # Get current time window with network delay compensation
+    current_time = get_synchronized_time()
+    estimated_time_window = calculate_time_window_with_compensation(current_time)
+    
+    # Calculate ports for multiple time windows around estimated window
+    candidate_ports = []
+    
+    for window_offset in [-2, -1, 0, 1, 2]:  # Check 5 time windows
+        time_window = estimated_time_window + window_offset
+        port = calculate_port_with_offset(
+            daily_key = recovery_connection.daily_key,
+            session_id = recovery_connection.session_id,
+            time_window = time_window,
+            src_endpoint = recovery_connection.local_endpoint,
+            dst_endpoint = recovery_connection.remote_endpoint,
+            connection_id = recovery_connection.connection_id
+        )
+        
+        candidate_ports.append({
+            'port': port,
+            'time_window': time_window,
+            'confidence': calculate_port_confidence(time_window, current_time)
+        })
+    
+    # Sort by confidence and try ports in order
+    candidate_ports.sort(key=lambda x: x.confidence, reverse=True)
+    
+    for candidate in candidate_ports:
+        if attempt_recovery_on_port(candidate.port, recovery_connection):
+            # Successfully synchronized on this port
+            recovery_connection.current_port = candidate.port
+            recovery_connection.synchronized_time_window = candidate.time_window
+            return SUCCESS
+    
+    return ERROR_RECOVERY_PORT_SYNC_FAILED
+
+function calculate_port_confidence(time_window, current_time):
+    # Calculate confidence level for port based on time window accuracy
+    window_start_time = time_window * HOP_INTERVAL_MS
+    time_diff = abs(current_time % MILLISECONDS_PER_DAY - window_start_time)
+    
+    # Higher confidence for time windows closer to current time
+    max_confidence = 100
+    confidence = max_confidence - (time_diff / HOP_INTERVAL_MS) * 20
+    
+    return max(0, confidence)
+
+function attempt_recovery_on_port(port, recovery_connection):
+    # Attempt to establish recovery on specific port
+    recovery_timeout = get_current_time_ms() + PORT_VALIDATION_TIMEOUT_MS
+    
+    # Send recovery packet on this port
+    recovery_packet = create_recovery_packet(
+        session_id = recovery_connection.session_id,
+        recovery_session_id = recovery_connection.recovery_session_id,
+        port_validation_nonce = generate_secure_random_32bit()
+    )
+    
+    send_packet_on_port(recovery_packet, port)
+    
+    # Wait for response
+    while get_current_time_ms() < recovery_timeout:
+        response = receive_packet_on_port_timeout(port, 100)  # 100ms timeout
+        
+        if response != null and validate_recovery_response(response, recovery_packet):
+            return true
+    
+    return false
+```
+
+### Port Blacklisting and Recovery
+
+```pseudocode
+function handle_port_blacklisting():
+    # Manage port blacklisting for problematic ports
+    current_time = get_current_time_ms()
+    
+    # Clean up expired blacklist entries
+    expired_entries = []
+    for port, blacklist_time in session_state.blacklisted_ports.items():
+        if current_time > blacklist_time + PORT_BLACKLIST_DURATION_MS:
+            expired_entries.append(port)
+    
+    for port in expired_entries:
+        del session_state.blacklisted_ports[port]
+        log_port_blacklist_removed(port)
+
+function blacklist_port(port, reason):
+    # Add port to blacklist
+    session_state.blacklisted_ports[port] = get_current_time_ms()
+    log_port_blacklisted(port, reason)
+    
+    # If current port is blacklisted, force immediate transition
+    if port == session_state.current_port:
+        return force_emergency_port_transition()
+    
+    return SUCCESS
+
+function force_emergency_port_transition():
+    # Force immediate port transition due to current port failure
+    emergency_attempts = 0
+    max_emergency_attempts = 10
+    
+    while emergency_attempts < max_emergency_attempts:
+        # Calculate emergency port with offset
+        emergency_time_window = get_current_time_window() + emergency_attempts
+        emergency_port = calculate_port_with_offset(
+            daily_key = session_state.daily_key,
+            session_id = session_state.session_id,
+            time_window = emergency_time_window,
+            src_endpoint = local_endpoint,
+            dst_endpoint = remote_endpoint,
+            connection_id = session_state.connection_id
+        )
+        
+        if validate_port_transition(emergency_port):
+            # Attempt immediate transition
+            if complete_emergency_port_transition(emergency_port):
+                return SUCCESS
+        
+        emergency_attempts += 1
+    
+    return ERROR_EMERGENCY_PORT_TRANSITION_FAILED
+
+function complete_emergency_port_transition(emergency_port):
+    # Complete emergency port transition immediately
+    old_port = session_state.current_port
+    
+    # Start listening on emergency port
+    if not start_listening_on_port(emergency_port):
+        return false
+    
+    # Update state immediately
+    session_state.current_port = emergency_port
+    session_state.port_history.append(old_port)
+    
+    # Send emergency transition notification to peer
+    emergency_notification = create_emergency_port_transition_packet(
+        old_port = old_port,
+        new_port = emergency_port,
+        transition_reason = "Port failure"
+    )
+    
+    send_packet(emergency_notification)
+    
+    # Clean up old port
+    stop_listening_on_port(old_port)
+    
+    return true
+```
+
+## Complete Emergency Recovery Specification
+
+### Emergency Recovery Overview
+
+Emergency recovery provides a complete session restoration mechanism when all other recovery methods fail. It performs full session re-establishment while preserving security properties and session identity.
+
+### Emergency Recovery Constants
+
+```pseudocode
+// Emergency recovery constants
+EMERGENCY_RECOVERY_TOKEN_SIZE = 32       // Emergency recovery token size (bytes)
+EMERGENCY_DATA_SIZE = 256                // Emergency recovery data size (bytes)
+EMERGENCY_RECOVERY_ATTEMPTS = 3          // Maximum emergency recovery attempts
+EMERGENCY_VERIFICATION_ROUNDS = 2        // Verification rounds for emergency recovery
+EMERGENCY_SESSION_RESTORE_TIMEOUT = 45000 // Session restoration timeout (45 seconds)
+EMERGENCY_STATE_BACKUP_INTERVAL = 60000  // State backup interval (1 minute)
+EMERGENCY_RECOVERY_PRIORITY_HIGH = 1     // High priority recovery
+EMERGENCY_RECOVERY_PRIORITY_NORMAL = 2   // Normal priority recovery
+EMERGENCY_RECOVERY_PRIORITY_LOW = 3      // Low priority recovery
+
+// Emergency recovery states
+EMERGENCY_STATE_NONE = 0                 // No emergency recovery needed
+EMERGENCY_STATE_INITIATED = 1           // Emergency recovery initiated
+EMERGENCY_STATE_AUTHENTICATING = 2       // Emergency authentication in progress
+EMERGENCY_STATE_RESTORING = 3           // Session state restoration in progress
+EMERGENCY_STATE_VERIFYING = 4           // Recovery verification in progress
+EMERGENCY_STATE_COMPLETED = 5           // Emergency recovery completed
+EMERGENCY_STATE_FAILED = 6              // Emergency recovery failed
+```
+
+### Emergency Recovery State Management
+
+```pseudocode
+// Emergency recovery state
+emergency_recovery_state = {
+    'current_state': EMERGENCY_STATE_NONE,
+    'recovery_token': null,
+    'recovery_session_id': 0,
+    'backup_session_state': null,
+    'recovery_attempts': 0,
+    'recovery_start_time': 0,
+    'emergency_key': null,
+    'recovery_priority': EMERGENCY_RECOVERY_PRIORITY_NORMAL,
+    'failed_recovery_types': [],
+    'recovery_verification_data': null
+}
+
+function initialize_emergency_recovery():
+    emergency_recovery_state.current_state = EMERGENCY_STATE_NONE
+    emergency_recovery_state.recovery_token = null
+    emergency_recovery_state.recovery_session_id = 0
+    emergency_recovery_state.backup_session_state = null
+    emergency_recovery_state.recovery_attempts = 0
+    emergency_recovery_state.emergency_key = null
+    emergency_recovery_state.failed_recovery_types = []
+```
+
+### Complete Emergency Recovery Process
+
+```pseudocode
+function execute_complete_emergency_recovery():
+    # Complete emergency recovery with full session restoration
+    emergency_recovery_state.current_state = EMERGENCY_STATE_INITIATED
+    emergency_recovery_state.recovery_start_time = get_current_time_ms()
+    emergency_recovery_state.recovery_attempts += 1
+    
+    if emergency_recovery_state.recovery_attempts > EMERGENCY_RECOVERY_ATTEMPTS:
+        return ERROR_EMERGENCY_RECOVERY_MAX_ATTEMPTS_EXCEEDED
+    
+    # Step 1: Generate emergency recovery credentials
+    recovery_result = generate_emergency_recovery_credentials()
+    if recovery_result != SUCCESS:
+        return recovery_result
+    
+    # Step 2: Create emergency recovery data
+    emergency_data = create_complete_emergency_recovery_data()
+    if emergency_data == null:
+        return ERROR_EMERGENCY_RECOVERY_DATA_CREATION_FAILED
+    
+    # Step 3: Initiate emergency authentication
+    auth_result = initiate_emergency_authentication(emergency_data)
+    if auth_result != SUCCESS:
+        return auth_result
+    
+    # Step 4: Restore session state
+    restore_result = restore_complete_session_state()
+    if restore_result != SUCCESS:
+        return restore_result
+    
+    # Step 5: Verify recovery integrity
+    verification_result = verify_emergency_recovery_integrity()
+    if verification_result != SUCCESS:
+        return verification_result
+    
+    # Step 6: Re-establish protocol state
+    return finalize_emergency_recovery()
+
+function generate_emergency_recovery_credentials():
+    # Generate emergency recovery token and session ID
+    emergency_recovery_state.recovery_token = generate_secure_random_bytes(EMERGENCY_RECOVERY_TOKEN_SIZE)
+    emergency_recovery_state.recovery_session_id = generate_secure_random_64bit()
+    
+    # Derive emergency recovery key from PSK and session context
+    emergency_key_material = derive_emergency_key_material()
+    if emergency_key_material == null:
+        return ERROR_EMERGENCY_KEY_DERIVATION_FAILED
+    
+    emergency_recovery_state.emergency_key = emergency_key_material
+    
+    return SUCCESS
+
+function derive_emergency_key_material():
+    # Derive emergency recovery key using HKDF with session context
+    psk_bytes = get_session_psk_bytes()
+    session_context = create_emergency_session_context()
+    
+    # HKDF-Extract with emergency salt
+    emergency_salt = b"emergency_recovery_salt_v1" + session_state.session_id.to_bytes(8, 'big')
+    prk = HMAC_SHA256(emergency_salt, psk_bytes)
+    
+    # HKDF-Expand with emergency context
+    info = b"emergency_recovery_key" + session_context
+    emergency_key = hkdf_expand_sha256(prk, info, 32)  # 256-bit key
+    
+    return emergency_key
+
+function create_emergency_session_context():
+    # Create session context for emergency key derivation
+    context_data = {
+        'original_session_id': session_state.session_id,
+        'local_endpoint': serialize_endpoint(local_endpoint),
+        'remote_endpoint': serialize_endpoint(remote_endpoint),
+        'connection_start_time': session_state.connection_start_time,
+        'last_known_good_sequence': session_state.last_known_good_sequence,
+        'emergency_recovery_reason': determine_emergency_recovery_reason()
+    }
+    
+    # Serialize context data
+    return serialize_context_data(context_data)
+```
+
+### Emergency Recovery Data Creation
+
+```pseudocode
+function create_complete_emergency_recovery_data():
+    # Create comprehensive emergency recovery data
+    
+    # Backup critical session state
+    session_backup = create_session_state_backup()
+    
+    # Create recovery verification data
+    verification_data = create_recovery_verification_data()
+    
+    # Create emergency recovery payload
+    recovery_payload = {
+        'version': 1,
+        'recovery_token': emergency_recovery_state.recovery_token,
+        'recovery_session_id': emergency_recovery_state.recovery_session_id,
+        'session_backup': session_backup,
+        'verification_data': verification_data,
+        'recovery_timestamp': get_current_time_ms(),
+        'recovery_priority': emergency_recovery_state.recovery_priority,
+        'failed_recovery_types': emergency_recovery_state.failed_recovery_types
+    }
+    
+    # Encrypt recovery payload
+    encrypted_payload = encrypt_emergency_recovery_data(recovery_payload)
+    
+    # Create integrity protection
+    recovery_hmac = calculate_emergency_recovery_hmac(encrypted_payload)
+    
+    return {
+        'encrypted_payload': encrypted_payload,
+        'recovery_hmac': recovery_hmac,
+        'payload_size': len(encrypted_payload)
+    }
+
+function create_session_state_backup():
+    # Create comprehensive backup of session state
+    backup_data = {
+        'session_id': session_state.session_id,
+        'connection_id': session_state.connection_id,
+        'local_sequence': session_state.send_sequence,
+        'remote_sequence': session_state.receive_sequence,
+        'last_acknowledged_sequence': session_state.last_acknowledged_sequence,
+        'send_window': session_state.send_window,
+        'receive_window': session_state.receive_window,
+        'congestion_window': session_state.congestion_window,
+        'current_port': session_state.current_port,
+        'port_history': session_state.port_history[-5:],  # Last 5 ports
+        'time_offset': time_sync_state.local_offset,
+        'last_sync_time': time_sync_state.last_sync_time,
+        'connection_start_time': session_state.connection_start_time,
+        'last_heartbeat_time': session_state.last_heartbeat_time,
+        'protocol_features': session_state.negotiated_features,
+        'rtt_measurements': {
+            'srtt': session_state.rtt_srtt,
+            'rttvar': session_state.rtt_rttvar,
+            'rto': session_state.rtt_rto
+        }
+    }
+    
+    return backup_data
+
+function create_recovery_verification_data():
+    # Create data for verifying recovery authenticity
+    verification_data = {
+        'psk_fingerprint': calculate_psk_fingerprint(),
+        'session_key_hash': calculate_session_key_hash(),
+        'recent_packet_hashes': get_recent_packet_hashes(),
+        'endpoint_verification': create_endpoint_verification(),
+        'connection_timeline': create_connection_timeline()
+    }
+    
+    return verification_data
+
+function calculate_psk_fingerprint():
+    # Calculate fingerprint of PSK for verification
+    psk_bytes = get_session_psk_bytes()
+    fingerprint_input = psk_bytes + b"psk_fingerprint_v1"
+    return SHA256(fingerprint_input)[0:16]  # 128-bit fingerprint
+
+function encrypt_emergency_recovery_data(recovery_payload):
+    # Encrypt recovery payload using emergency key
+    iv = generate_secure_random_bytes(16)  # 128-bit IV for AES-256-GCM
+    
+    # Serialize recovery payload
+    payload_bytes = serialize_recovery_payload(recovery_payload)
+    
+    # Encrypt with AES-256-GCM
+    encrypted_data, auth_tag = aes_256_gcm_encrypt(
+        key = emergency_recovery_state.emergency_key,
+        iv = iv,
+        plaintext = payload_bytes,
+        additional_data = b"emergency_recovery_v1"
+    )
+    
+    return iv + encrypted_data + auth_tag
+```
+
+### Emergency Authentication Process
+
+```pseudocode
+function initiate_emergency_authentication(emergency_data):
+    # Initiate emergency authentication with peer
+    emergency_recovery_state.current_state = EMERGENCY_STATE_AUTHENTICATING
+    
+    # Create emergency request packet
+    emergency_request = create_emergency_request_packet(
+        emergency_token = emergency_recovery_state.recovery_token,
+        recovery_session_id = emergency_recovery_state.recovery_session_id,
+        emergency_data = emergency_data.encrypted_payload,
+        recovery_hmac = emergency_data.recovery_hmac,
+        authentication_challenge = generate_emergency_auth_challenge()
+    )
+    
+    # Send emergency request
+    send_emergency_packet(emergency_request)
+    
+    # Wait for emergency response
+    emergency_response = receive_emergency_response(EMERGENCY_RECOVERY_TIMEOUT_MS)
+    
+    if emergency_response == null:
+        return ERROR_EMERGENCY_AUTHENTICATION_TIMEOUT
+    
+    # Verify emergency response
+    return verify_emergency_authentication_response(emergency_response)
+
+function verify_emergency_authentication_response(response):
+    # Verify emergency authentication response
+    if response.type != PACKET_TYPE_EMERGENCY_RESPONSE:
+        return ERROR_EMERGENCY_AUTHENTICATION_INVALID_RESPONSE
+    
+    if response.emergency_token != emergency_recovery_state.recovery_token:
+        return ERROR_EMERGENCY_AUTHENTICATION_TOKEN_MISMATCH
+    
+    if response.recovery_session_id != emergency_recovery_state.recovery_session_id:
+        return ERROR_EMERGENCY_AUTHENTICATION_SESSION_MISMATCH
+    
+    # Verify response HMAC
+    expected_hmac = calculate_emergency_response_hmac(response)
+    if not constant_time_compare(response.confirmation, expected_hmac):
+        return ERROR_EMERGENCY_AUTHENTICATION_HMAC_INVALID
+    
+    # Verify challenge response
+    if not verify_emergency_challenge_response(response.challenge_response):
+        return ERROR_EMERGENCY_AUTHENTICATION_CHALLENGE_FAILED
+    
+    # Store peer's emergency data for verification
+    emergency_recovery_state.recovery_verification_data = response.emergency_data
+    
+    return SUCCESS
+
+function generate_emergency_auth_challenge():
+    # Generate authentication challenge for emergency recovery
+    challenge_data = {
+        'challenge_nonce': generate_secure_random_32bit(),
+        'timestamp': get_current_time_ms(),
+        'session_fingerprint': calculate_session_fingerprint(),
+        'recovery_context': create_recovery_context_hash()
+    }
+    
+    return challenge_data
+
+function calculate_session_fingerprint():
+    # Calculate unique fingerprint for this session
+    fingerprint_input = (
+        session_state.session_id.to_bytes(8, 'big') +
+        session_state.connection_id.to_bytes(8, 'big') +
+        session_state.connection_start_time.to_bytes(8, 'big') +
+        calculate_psk_fingerprint()
+    )
+    
+    return SHA256(fingerprint_input)[0:16]  # 128-bit fingerprint
+```
+
+### Session State Restoration
+
+```pseudocode
+function restore_complete_session_state():
+    # Restore complete session state from emergency recovery
+    emergency_recovery_state.current_state = EMERGENCY_STATE_RESTORING
+    
+    # Decrypt peer's emergency data
+    peer_recovery_data = decrypt_peer_emergency_data()
+    if peer_recovery_data == null:
+        return ERROR_EMERGENCY_RESTORE_DECRYPTION_FAILED
+    
+    # Validate peer's recovery data
+    if not validate_peer_recovery_data(peer_recovery_data):
+        return ERROR_EMERGENCY_RESTORE_VALIDATION_FAILED
+    
+    # Restore session state
+    restoration_result = restore_session_from_backup(peer_recovery_data.session_backup)
+    if restoration_result != SUCCESS:
+        return restoration_result
+    
+    # Re-derive session keys
+    key_derivation_result = rederive_emergency_session_keys()
+    if key_derivation_result != SUCCESS:
+        return key_derivation_result
+    
+    # Restore protocol state
+    return restore_protocol_state(peer_recovery_data)
+
+function decrypt_peer_emergency_data():
+    # Decrypt peer's emergency recovery data
+    encrypted_data = emergency_recovery_state.recovery_verification_data
+    
+    # Extract IV, ciphertext, and auth tag
+    iv = encrypted_data[0:16]
+    ciphertext = encrypted_data[16:-16]
+    auth_tag = encrypted_data[-16:]
+    
+    # Decrypt with emergency key
+    try:
+        decrypted_data = aes_256_gcm_decrypt(
+            key = emergency_recovery_state.emergency_key,
+            iv = iv,
+            ciphertext = ciphertext,
+            auth_tag = auth_tag,
+            additional_data = b"emergency_recovery_v1"
+        )
+        
+        # Deserialize recovery data
+        return deserialize_recovery_payload(decrypted_data)
+        
+    except DecryptionError:
+        return null
+
+function restore_session_from_backup(session_backup):
+    # Restore session state from backup data
+    
+    # Validate backup data integrity
+    if not validate_session_backup(session_backup):
+        return ERROR_EMERGENCY_RESTORE_BACKUP_INVALID
+    
+    # Restore basic session parameters
+    session_state.session_id = session_backup.session_id
+    session_state.connection_id = session_backup.connection_id
+    
+    # Restore sequence numbers with safety checks
+    session_state.send_sequence = session_backup.local_sequence
+    session_state.receive_sequence = session_backup.remote_sequence
+    session_state.last_acknowledged_sequence = session_backup.last_acknowledged_sequence
+    
+    # Restore flow control state
+    session_state.send_window = min(session_backup.send_window, MAX_CONGESTION_WINDOW)
+    session_state.receive_window = min(session_backup.receive_window, MAX_RECEIVE_WINDOW)
+    session_state.congestion_window = min(session_backup.congestion_window, MAX_CONGESTION_WINDOW)
+    
+    # Restore port state
+    session_state.current_port = session_backup.current_port
+    session_state.port_history = session_backup.port_history
+    
+    # Restore time synchronization
+    time_sync_state.local_offset = session_backup.time_offset
+    time_sync_state.last_sync_time = session_backup.last_sync_time
+    
+    # Restore connection timing
+    session_state.connection_start_time = session_backup.connection_start_time
+    session_state.last_heartbeat_time = session_backup.last_heartbeat_time
+    
+    # Restore RTT measurements
+    session_state.rtt_srtt = session_backup.rtt_measurements.srtt
+    session_state.rtt_rttvar = session_backup.rtt_measurements.rttvar
+    session_state.rtt_rto = session_backup.rtt_measurements.rto
+    
+    return SUCCESS
+
+function rederive_emergency_session_keys():
+    # Re-derive session keys after emergency recovery
+    
+    # Derive new daily key for current date
+    new_daily_key = derive_daily_key_for_current_date(get_session_psk())
+    
+    # Create emergency session key derivation context
+    emergency_context = (
+        emergency_recovery_state.recovery_token +
+        emergency_recovery_state.recovery_session_id.to_bytes(8, 'big') +
+        b"emergency_session_key_v1"
+    )
+    
+    # Derive new session key
+    new_session_key = derive_session_key(
+        daily_key = new_daily_key,
+        session_id = session_state.session_id,
+        nonce = emergency_context
+    )
+    
+    # Update session keys
+    session_state.daily_key = new_daily_key
+    session_state.session_key = new_session_key
+    
+    return SUCCESS
+```
+
+### Emergency Recovery Verification
+
+```pseudocode
+function verify_emergency_recovery_integrity():
+    # Verify integrity of emergency recovery process
+    emergency_recovery_state.current_state = EMERGENCY_STATE_VERIFYING
+    
+    # Perform multiple verification rounds
+    for verification_round in range(EMERGENCY_VERIFICATION_ROUNDS):
+        round_result = perform_verification_round(verification_round + 1)
+        if round_result != SUCCESS:
+            return round_result
+    
+    return SUCCESS
+
+function perform_verification_round(round_number):
+    # Perform single verification round
+    
+    # Test 1: Verify session key consistency
+    key_test_result = verify_session_key_consistency()
+    if key_test_result != SUCCESS:
+        return key_test_result
+    
+    # Test 2: Verify sequence number consistency
+    sequence_test_result = verify_sequence_number_consistency()
+    if sequence_test_result != SUCCESS:
+        return sequence_test_result
+    
+    # Test 3: Verify port calculation consistency
+    port_test_result = verify_port_calculation_consistency()
+    if port_test_result != SUCCESS:
+        return port_test_result
+    
+    # Test 4: Verify time synchronization
+    time_test_result = verify_time_synchronization_consistency()
+    if time_test_result != SUCCESS:
+        return time_test_result
+    
+    return SUCCESS
+
+function verify_session_key_consistency():
+    # Verify session key produces correct HMACs
+    test_data = b"emergency_recovery_key_test_v1"
+    test_hmac = HMAC_SHA256(session_state.session_key, test_data)
+    
+    # Send test packet to peer
+    test_packet = create_emergency_verification_packet(
+        test_data = test_data,
+        expected_hmac = test_hmac
+    )
+    
+    send_packet(test_packet)
+    
+    # Receive verification response
+    verification_response = receive_packet_timeout(5000)  # 5 second timeout
+    
+    if verification_response == null:
+        return ERROR_EMERGENCY_VERIFICATION_TIMEOUT
+    
+    if verification_response.verification_result != SUCCESS:
+        return ERROR_EMERGENCY_VERIFICATION_KEY_MISMATCH
+    
+    return SUCCESS
+
+function finalize_emergency_recovery():
+    # Finalize emergency recovery and return to normal operation
+    emergency_recovery_state.current_state = EMERGENCY_STATE_COMPLETED
+    
+    # Reset recovery counters
+    emergency_recovery_state.recovery_attempts = 0
+    emergency_recovery_state.failed_recovery_types = []
+    
+    # Clean up emergency recovery state
+    secure_zero_memory(emergency_recovery_state.recovery_token)
+    secure_zero_memory(emergency_recovery_state.emergency_key)
+    emergency_recovery_state.recovery_token = null
+    emergency_recovery_state.emergency_key = null
+    
+    # Transition back to normal state
+    transition_to_state(ESTABLISHED)
+    
+    # Force immediate time synchronization
+    execute_precision_time_sync()
+    
+    # Send emergency recovery completion notification
+    completion_packet = create_emergency_completion_packet()
+    send_packet(completion_packet)
+    
+    log_emergency_recovery_success()
+    
+    return SUCCESS
 ```
