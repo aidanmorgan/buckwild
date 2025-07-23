@@ -1,20 +1,10 @@
-# Complete Packet Format Specifications
+# Packet Architecture and Format Specifications
+
+This document defines the complete packet format specifications for the protocol, including all packet types, header structures, and field definitions.
 
 ## Overview
 
-This document defines the complete packet format specifications for the protocol, including all packet types, header structures, and field definitions. The packet format provides the fundamental data structures used for all network communication between peers.
-
-## Purpose and Rationale
-
-The packet format specification serves several critical functions:
-
-- **Protocol Foundation**: Defines the basic communication units that enable all protocol functionality
-- **Header Optimization**: Provides an optimized common header format that reduces overhead while maintaining necessary information
-- **Type Consolidation**: Consolidates multiple legacy packet types into fewer, more efficient types with sub-type extensions
-- **Field Efficiency**: Moves conditional fields to packet payloads to minimize header size for all packets
-- **Extensibility**: Provides sub-type mechanisms that allow future protocol extensions without breaking compatibility
-
-The optimized design reduces the common header from 64 to 50 bytes (21.9% reduction) while maintaining all necessary functionality and providing better extensibility through the sub-type architecture.
+The packet format provides the fundamental data structures used for all network communication between peers. The design has been optimized to reduce overhead while maintaining all necessary functionality and providing better extensibility.
 
 ## Key Concepts
 
@@ -25,6 +15,7 @@ The optimized design reduces the common header from 64 to 50 bytes (21.9% reduct
 - **HMAC Authentication**: 128-bit authentication field in every packet header ensuring message integrity and authenticity
 
 ## Packet Type Definitions (Standardized)
+
 ```pseudocode
 // Optimized packet types with sub-types
 PACKET_TYPE_SYN = 0x01                  // Connection establishment
@@ -58,6 +49,7 @@ DISCOVERY_SUB_CONFIRM = 0x03            // PSK discovery confirmation
 ```
 
 ## Optimized Common Header Format (All Packets)
+
 ```pseudocode
 Optimized Common Header Structure (Big-Endian):
 +--------+--------+--------+--------+
@@ -98,6 +90,7 @@ Field Definitions:
 - HMAC (128-bit): Authentication hash using session key (big-endian)
 
 Total Optimized Header Size: 50 bytes (14 bytes smaller than original)
+```
 
 ## Conditional Fields (Moved to Packet Payloads)
 
@@ -140,7 +133,6 @@ SACK Header (Variable length):
 +-----------------------------------+
 ```
 Used in: ACK packets when selective acknowledgment needed
-```
 
 ## Packet Type Specifications
 
@@ -266,7 +258,6 @@ Total SYN-ACK Packet Size: 50 + 124 = 174 bytes
 - Confirms successful receipt of data packets to enable sender buffer cleanup
 - Provides flow control by advertising current receive window size
 - Implements selective acknowledgment (SACK) to efficiently recover from packet loss
-- Replaces the separate WINDOW_UPDATE packet for better efficiency
 - Enables precise congestion control feedback for optimal throughput
 
 **When used**: Sent in response to DATA packets, for flow control updates, or to acknowledge connection establishment.
@@ -313,7 +304,6 @@ Total ACK Packet Size: 54 bytes (basic) + 5 + 8*N bytes (SACK with N ranges)
 - Integrates fragmentation capabilities to handle large payloads that exceed network MTU
 - Provides flow control information to prevent receiver buffer overflow
 - Maintains sequence ordering for reliable data delivery
-- Replaces the separate FRAGMENT packet type for better efficiency
 
 **When used**: Sent whenever application data needs to be transmitted, including both regular and fragmented data.
 
@@ -435,7 +425,6 @@ Field Definitions:
 Optimized HEARTBEAT Packet Size: 50 + 4 + 16 = 70 bytes (10 bytes smaller than original)
 ```
 
-
 ### ERROR Packet (Type 0x09)
 
 **Purpose**: Reports protocol errors, authentication failures, and other exceptional conditions to the peer.
@@ -473,6 +462,37 @@ Field Definitions:
 Total ERROR Packet Size: 50 + 4 + error_message_length bytes
 ```
 
+### RST Packet (Type 0x0B)
+
+**Purpose**: Immediately terminates a connection and rejects further communication attempts.
+
+**Why it exists**: The RST packet provides forceful connection termination for error conditions:
+- Enables immediate connection shutdown when errors prevent normal operation
+- Rejects connection attempts to invalid or unauthorized sessions
+- Provides a clear signal that the connection cannot or should not continue
+- Distinguishes between graceful shutdown (FIN) and forceful termination (RST)
+- Includes a reason code to help diagnose why the connection was reset
+
+**When used**: Sent when connections must be immediately terminated due to errors, security violations, or invalid state transitions.
+
+```pseudocode
+RST Packet Structure (Big-Endian):
++-----------------------------------+
+|      Optimized Common Header      |
+|           (50 bytes)             |
++-----------------------------------+
+| Reset Reason|      Reserved      |
+|   (8-bit)   |     (24-bit)      |
++-----------------------------------+
+
+Field Definitions:
+- Optimized Common Header (50 bytes): Standard header with RST flag set
+- Reset Reason (8-bit): Reason for reset
+- Reserved (24-bit): Always 0x000000
+
+Total RST Packet Size: 50 + 4 = 54 bytes
+```
+
 ### CONTROL Packet (Type 0x0C)
 
 **Purpose**: Handles various control operations including time synchronization and session recovery.
@@ -481,7 +501,6 @@ Total ERROR Packet Size: 50 + 4 + error_message_length bytes
 - Provides time synchronization for coordinated port hopping between peers
 - Enables session recovery with detailed state information
 - Handles sequence number negotiation for secure connection establishment
-- Replaces multiple legacy packet types with a unified, extensible control framework
 
 **When used**: Sent for time synchronization, session recovery operations, and sequence negotiations.
 
@@ -532,102 +551,6 @@ RECOVERY (Sub-Type 0x03):
 |     (8-bit)      |   (24-bit)   |
 +-------------------+---------------+
 Total: 50 + 16 = 66 bytes
-
-EMERGENCY_REQUEST (Sub-Type 0x04):
-+-----------------------------------+
-|    Emergency Token (32-bit)      |
-+-----------------------------------+
-|  Emergency Session ID (64-bit)   |
-|                                 |
-+-----------------------------------+
-|    Recovery Reason (8-bit)       |
-+-----------------------------------+
-|   Emergency Data Length (16-bit) |
-+-----------------------------------+
-|      PSK Fingerprint (64-bit)    |
-|                                 |
-+-----------------------------------+
-|    Encrypted Recovery Data       |
-|        (Variable Length)         |
-|      (up to 128 bytes)           |
-+-----------------------------------+
-Total: 50 + 23 + encrypted_data_length bytes (max 201 bytes)
-
-EMERGENCY_RESPONSE (Sub-Type 0x05):
-+-----------------------------------+
-|    Emergency Token (32-bit)      |
-+-----------------------------------+
-|  Emergency Session ID (64-bit)   |
-|                                 |
-+-----------------------------------+
-|   Recovery Status (8-bit)        |
-+-----------------------------------+
-|   New Session Parameters (64-bit)|
-|                                 |
-+-----------------------------------+
-|   Recovery Confirmation (128-bit)|
-|                                 |
-|                                 |
-+-----------------------------------+
-|        Reserved (32-bit)         |
-+-----------------------------------+
-Total: 50 + 35 = 85 bytes
-
-SEQUENCE_NEG (Sub-Type 0x06):
-+-----------------------------------+
-|   Negotiation Phase (8-bit)      |
-+-----------------------------------+
-|   Sequence Commitment (32-bit)   |
-+-----------------------------------+
-|   Sequence Proof (32-bit)        |
-+-----------------------------------+
-|   Challenge Nonce (32-bit)       |
-+-----------------------------------+
-|        Reserved (24-bit)         |
-+-----------------------------------+
-Total: 50 + 16 = 66 bytes
-
-EMERGENCY_VERIFY (Sub-Type 0x07):
-+-----------------------------------+
-|      Test Data (32-bit)          |
-+-----------------------------------+
-|      Expected HMAC (128-bit)     |
-|                                 |
-+-----------------------------------+
-|        Reserved (64-bit)         |
-+-----------------------------------+
-Total: 50 + 24 = 74 bytes
-```
-
-### RST Packet (Type 0x0B)
-
-**Purpose**: Immediately terminates a connection and rejects further communication attempts.
-
-**Why it exists**: The RST packet provides forceful connection termination for error conditions:
-- Enables immediate connection shutdown when errors prevent normal operation
-- Rejects connection attempts to invalid or unauthorized sessions
-- Provides a clear signal that the connection cannot or should not continue
-- Distinguishes between graceful shutdown (FIN) and forceful termination (RST)
-- Includes a reason code to help diagnose why the connection was reset
-
-**When used**: Sent when connections must be immediately terminated due to errors, security violations, or invalid state transitions.
-
-```pseudocode
-RST Packet Structure (Big-Endian):
-+-----------------------------------+
-|      Optimized Common Header      |
-|           (50 bytes)             |
-+-----------------------------------+
-| Reset Reason|      Reserved      |
-|   (8-bit)   |     (24-bit)      |
-+-----------------------------------+
-
-Field Definitions:
-- Optimized Common Header (50 bytes): Standard header with RST flag set
-- Reset Reason (8-bit): Reason for reset
-- Reserved (24-bit): Always 0x000000
-
-Total RST Packet Size: 50 + 4 = 54 bytes
 ```
 
 ### MANAGEMENT Packet (Type 0x0D)

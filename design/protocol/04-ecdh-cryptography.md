@@ -1,8 +1,10 @@
 # ECDH-Based Cryptography Specifications
 
+This document defines the comprehensive ECDH-based cryptographic framework that secures all protocol communications using ephemeral Diffie-Hellman key exchange, PBKDF2 parameter derivation, and message authentication.
+
 ## Overview
 
-This document defines the comprehensive ECDH-based cryptographic framework that secures all protocol communications using ephemeral Diffie-Hellman key exchange, PBKDF2 parameter derivation, and privacy-preserving set intersection for PSK discovery. The cryptographic design ensures perfect forward secrecy, prevents data exposure, and maintains strong security properties throughout the protocol lifecycle.
+The ECDH-based cryptographic system provides perfect forward secrecy, zero data exposure, and cryptographically derived parameters for all protocol operations. All sensitive exchanges use ephemeral ECDH to prevent information leakage.
 
 ## Purpose and Rationale
 
@@ -169,236 +171,6 @@ function rekey_session_keys(psk, session_id, new_nonce):
         'session_key': new_session_key
     }
 ```
-
-
-## Sequence Repair Cryptographic Proofs
-
-```pseudocode
-function calculate_sequence_proof(sequence, nonce, peer_commitment):
-    # Create HMAC proof that sequence matches expected value for sequence repair
-    proof_input = sequence || nonce || peer_commitment || session_id
-    return HMAC_SHA256_128(session_key, proof_input)[0:4]
-
-function calculate_confirmation_proof(local_sequence, peer_sequence):
-    # Final confirmation that both parties have valid sequences
-    confirmation_input = min(local_sequence, peer_sequence) || max(local_sequence, peer_sequence) || session_id
-    return HMAC_SHA256_128(session_key, confirmation_input)[0:4]
-```
-
-## Session Rekeying Cryptography
-
-```pseudocode
-function execute_rekey_recovery():
-    # Step 1: Generate new session key material
-    rekey_nonce = generate_secure_random_32bit()
-    new_daily_key = derive_daily_key_for_current_date(psk)
-    new_session_key_material = generate_secure_random_256bit()
-    
-    # Step 2: Create key commitment
-    key_commitment = create_key_commitment(new_session_key_material, rekey_nonce)
-    
-    rekey_request = create_rekey_request(
-        rekey_nonce = rekey_nonce,
-        new_key_commitment = key_commitment
-    )
-    
-    send_packet(rekey_request)
-    
-    # Step 3: Receive peer's rekey response
-    rekey_response = receive_packet_timeout(REKEY_TIMEOUT_MS)
-    
-    if rekey_response == null or rekey_response.type != PACKET_TYPE_MANAGEMENT or rekey_response.sub_type != MANAGEMENT_SUB_REKEY_RESPONSE:
-        return ERROR_REKEY_TIMEOUT
-    
-    if rekey_response.rekey_nonce != rekey_nonce:
-        return ERROR_REKEY_INVALID_NONCE
-    
-    # Step 4: Derive new session key
-    combined_key_material = new_session_key_material || rekey_response.new_key_commitment
-    new_session_key = derive_session_key(new_daily_key, session_id, combined_key_material)
-    
-    # Step 5: Verify rekey confirmation
-    expected_confirmation = HMAC_SHA256_128(new_session_key, "rekey_confirmation" || session_id)
-    if not constant_time_compare(rekey_response.confirmation, expected_confirmation[0:16]):
-        return ERROR_REKEY_CONFIRMATION_INVALID
-    
-    # Step 6: Atomically switch to new key
-    old_session_key = session_state.session_key
-    session_state.session_key = new_session_key
-    session_state.daily_key = new_daily_key
-    
-    # Step 7: Secure cleanup of old key
-    secure_zero_memory(old_session_key)
-    secure_zero_memory(new_session_key_material)
-    
-    log_recovery_success("Session rekey completed")
-    return SUCCESS
-
-function create_key_commitment(key_material, nonce):
-    commitment_input = key_material || nonce || session_id || "key_commitment"
-    return SHA256(commitment_input)
-```
-
-## Emergency Recovery Cryptography
-
-```pseudocode
-function derive_emergency_key_material():
-    # Derive emergency recovery key using HKDF with session context
-    psk_bytes = get_session_psk_bytes()
-    session_context = create_emergency_session_context()
-    
-    # HKDF-Extract with emergency salt
-    emergency_salt = b"emergency_recovery_salt_v1" + session_state.session_id.to_bytes(8, 'big')
-    prk = HMAC_SHA256_128(emergency_salt, psk_bytes)
-    
-    # HKDF-Expand with emergency context
-    info = b"emergency_recovery_key" + session_context
-    emergency_key = hkdf_expand_sha256(prk, info, 32)  # 256-bit key
-    
-    return emergency_key
-
-function create_emergency_session_context():
-    # Create session context for emergency key derivation
-    context_data = {
-        'original_session_id': session_state.session_id,
-        'local_endpoint': serialize_endpoint(local_endpoint),
-        'remote_endpoint': serialize_endpoint(remote_endpoint),
-        'connection_start_time': session_state.connection_start_time,
-        'last_known_good_sequence': session_state.last_known_good_sequence,
-        'emergency_recovery_reason': determine_emergency_recovery_reason()
-    }
-    
-    # Serialize context data
-    return serialize_emergency_context(context_data)
-
-function encrypt_emergency_recovery_data(recovery_payload):
-    # Encrypt recovery payload using emergency key
-    iv = generate_secure_random_bytes(16)  # 128-bit IV for AES-256-GCM
-    
-    # Serialize recovery payload
-    payload_bytes = serialize_recovery_payload(recovery_payload)
-    
-    # Encrypt with AES-256-GCM
-    encrypted_data, auth_tag = aes_256_gcm_encrypt(
-        key = emergency_recovery_state.emergency_key,
-        iv = iv,
-        plaintext = payload_bytes,
-        additional_data = b"emergency_recovery_v1"
-    )
-    
-    return iv + encrypted_data + auth_tag
-
-function rederive_emergency_session_keys():
-    # Re-derive session keys after emergency recovery
-    
-    # Derive new daily key for current date
-    new_daily_key = derive_daily_key_for_current_date(get_session_psk())
-    
-    # Create emergency session key derivation context
-    emergency_context = (
-        emergency_recovery_state.recovery_token +
-        emergency_recovery_state.recovery_session_id.to_bytes(8, 'big') +
-        b"emergency_session_key_v1"
-    )
-    
-    # Derive new session key
-    new_session_key = derive_session_key(
-        daily_key = new_daily_key,
-        session_id = session_state.session_id,
-        nonce = emergency_context
-    )
-    
-    # Update session keys
-    session_state.daily_key = new_daily_key
-    session_state.session_key = new_session_key
-    
-    return SUCCESS
-
-function verify_session_key_consistency():
-    # Verify session key produces correct HMACs
-    test_data = b"emergency_recovery_key_test_v1"
-    test_hmac = HMAC_SHA256_128(session_state.session_key, test_data)
-    
-    # Send test packet to peer
-    test_packet = create_emergency_verification_packet(
-        test_data = test_data,
-        expected_hmac = test_hmac
-    )
-    
-    send_packet(test_packet)
-    
-    return SUCCESS
-```
-
-## PSK Fingerprinting and Discovery
-
-```pseudocode
-function calculate_psk_fingerprint(psk_material):
-    # Calculate PSK fingerprint for local storage and matching
-    # NOTE: This fingerprint is NEVER transmitted over the network
-    psk_bytes = psk_material.encode('utf-8') if isinstance(psk_material, str) else psk_material
-    fingerprint_input = psk_bytes + b"psk_fingerprint_v2"
-    return SHA256(fingerprint_input)[0:16]  # 128-bit fingerprint for local use only
-
-function create_psk_knowledge_proof(psk_material, challenge_nonce, discovery_id):
-    # Create zero-knowledge proof that we know a PSK without revealing which one
-    # Uses the PSK material to create a proof that can be verified by someone
-    # who has the same PSK, but reveals nothing to attackers
-    psk_hash = SHA256(psk_material + b"psk_proof_salt")
-    proof_input = psk_hash + challenge_nonce + discovery_id + b"knowledge_proof_v1"
-    return HMAC_SHA256_128(psk_hash, proof_input)
-
-function verify_psk_knowledge_proof(proof, challenge_nonce, discovery_id, candidate_psk):
-    # Verify if the proof was generated using the candidate PSK
-    expected_proof = create_psk_knowledge_proof(candidate_psk, challenge_nonce, discovery_id)
-    return constant_time_compare(proof, expected_proof)
-
-function discover_matching_psk(peer_proofs, challenge_nonce, discovery_id, local_psk_list):
-    # Discover which PSK the peer is using by testing our local PSKs
-    # Returns the matching PSK or null if no match found
-    for local_psk in local_psk_list:
-        for peer_proof in peer_proofs:
-            if verify_psk_knowledge_proof(peer_proof, challenge_nonce, discovery_id, local_psk):
-                return local_psk
-    return null  # No matching PSK found
-
-function generate_psk_proof_set(local_psk_list, challenge_nonce, discovery_id, max_proofs=8):
-    # Generate a set of PSK knowledge proofs for our available PSKs
-    # Limits to max_proofs to prevent packet size explosion
-    proof_set = []
-    psk_subset = select_psk_subset(local_psk_list, max_proofs)  # Select representative PSKs
-    
-    for psk in psk_subset:
-        proof = create_psk_knowledge_proof(psk, challenge_nonce, discovery_id)
-        proof_set.append(proof)
-    
-    return proof_set
-
-function generate_connection_id(local_endpoint, remote_endpoint, psk):
-    # Generate deterministic connection ID from endpoint pair and PSK
-    # This ensures both peers derive the same connection ID
-    
-    # Create canonical endpoint representation (order endpoints consistently)
-    if compare_endpoints(local_endpoint, remote_endpoint) < 0:
-        endpoint_a = local_endpoint
-        endpoint_b = remote_endpoint
-    else:
-        endpoint_a = remote_endpoint
-        endpoint_b = local_endpoint
-    
-    # Serialize endpoints for hashing
-    endpoint_a_bytes = serialize_endpoint(endpoint_a)
-    endpoint_b_bytes = serialize_endpoint(endpoint_b)
-    psk_bytes = psk.encode('utf-8') if isinstance(psk, str) else psk
-    
-    # Create deterministic ID material
-    id_material = endpoint_a_bytes + endpoint_b_bytes + psk_bytes + b"connection_id_v1"
-    
-    # Hash to create 64-bit connection ID
-    hash_result = SHA256(id_material)
-    connection_id = bytes_to_uint64(hash_result[0:8])
-    
-    return connection_id
 
 ## Ephemeral Diffie-Hellman Key Exchange
 
@@ -628,12 +400,82 @@ function handle_ecdh_connection_request(syn_packet):
     return session_keys
 ```
 
-### Security Properties
+## ECDH-Based Session Recovery
 
-1. **Perfect Forward Secrecy**: Ephemeral keys are deleted after use
-2. **Key Diversification**: PBKDF2 with different salts creates independent derived keys
-3. **Mutual Authentication**: Both peers prove knowledge of shared secret
-4. **Replay Resistance**: Key exchange IDs and timestamps prevent replay
-5. **Parameter Binding**: All derived values are cryptographically tied to the key exchange
+### Session Rekeying
 
+```pseudocode
+function execute_ecdh_rekey_recovery():
+    # Step 1: Generate ephemeral ECDH key pair for secure rekeying
+    rekey_keypair = generate_ecdh_keypair()
+    rekey_nonce = generate_secure_random_32bit()
+    
+    # Step 2: Send ECDH rekey request with public key (no key material exposed)
+    rekey_request = create_ecdh_rekey_request(
+        rekey_nonce = rekey_nonce,
+        rekey_public_key = rekey_keypair.public  # 64-byte P-256 public key
+    )
+    send_packet(rekey_request)
+    
+    # Step 3: Receive peer's ECDH rekey response
+    rekey_response = receive_packet_timeout(REKEY_TIMEOUT_MS)
+    
+    if rekey_response == null or rekey_response.type != PACKET_TYPE_MANAGEMENT or rekey_response.sub_type != MANAGEMENT_SUB_REKEY_RESPONSE:
+        return ERROR_REKEY_TIMEOUT
+    
+    if rekey_response.rekey_nonce != rekey_nonce:
+        return ERROR_REKEY_INVALID_NONCE
+    
+    # Step 4: Perform ECDH to derive new session keys securely
+    rekey_shared_secret = perform_ecdh(rekey_keypair.private, rekey_response.peer_public_key)
+    if rekey_shared_secret == ERROR_INVALID_PUBLIC_KEY:
+        return ERROR_REKEY_INVALID_KEY
+    
+    # Step 5: Derive new session keys using PBKDF2 from ECDH secret
+    new_session_keys = derive_session_keys_from_dh(
+        rekey_shared_secret,
+        rekey_keypair.public,
+        rekey_response.peer_public_key,
+        session_id || "rekey_v1"
+    )
+    
+    # Step 6: Verify shared secret hash for mutual authentication
+    expected_secret_hash = create_ecdh_verification_hash(rekey_shared_secret)
+    if not constant_time_compare(rekey_response.shared_secret_hash, expected_secret_hash):
+        return ERROR_REKEY_SHARED_SECRET_MISMATCH
+    
+    # Step 7: Atomically switch to new ECDH-derived keys
+    old_session_key = session_state.session_key
+    session_state.session_key = new_session_keys.session_key
+    # Update other derived parameters too
+    session_state.port_hop_seed = new_session_keys.port_hop_seed
+    
+    # Step 8: Secure cleanup - clear ephemeral keys for forward secrecy
+    secure_zero_memory(rekey_keypair.private)
+    secure_zero_memory(rekey_shared_secret)
+    secure_zero_memory(old_session_key)
+    
+    log_recovery_success("ECDH session rekey completed with forward secrecy")
+    return SUCCESS
 ```
+
+
+### Cryptographic Constants
+
+```pseudocode
+// Elliptic curve constants (P-256)
+CURVE_P256_FIELD_SIZE = 32              // P-256 field element size in bytes
+CURVE_P256_SCALAR_SIZE = 32             // P-256 scalar size in bytes
+CURVE_P256_POINT_SIZE = 64              // P-256 uncompressed point size in bytes (x + y coordinates)
+CURVE_P256_COMPRESSED_SIZE = 33         // P-256 compressed point size (sign + x coordinate)
+
+// ECDH and PBKDF2 constants
+ECDH_SHARED_SECRET_SIZE = 32            // ECDH shared secret size in bytes (x-coordinate)
+PBKDF2_ITERATIONS_SESSION = 4096        // PBKDF2 iterations for session key derivation
+PBKDF2_ITERATIONS_SEQUENCE = 2048       // PBKDF2 iterations for sequence number derivation
+PBKDF2_ITERATIONS_PORT = 2048           // PBKDF2 iterations for port offset derivation
+KEY_EXCHANGE_TIMEOUT_MS = 10000         // ECDH key exchange timeout (10 seconds)
+SHARED_SECRET_VERIFY_SIZE = 32          // Size of shared secret verification hash
+```
+
+This ECDH-based cryptographic framework provides the strongest possible security guarantees with perfect forward secrecy and zero data exposure, ensuring all protocol operations are secured through ephemeral key exchange and cryptographic parameter derivation.

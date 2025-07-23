@@ -1,33 +1,43 @@
-# Port Hopping Specification
+# Synchronized Port Hopping for Network Security
+
+This document defines the synchronized port hopping mechanism that enables the protocol to dynamically change communication ports in a coordinated, predictable manner while maintaining security through cryptographically derived sequences.
 
 ## Overview
 
-This document defines the port hopping mechanism that enables the protocol to dynamically change communication ports in a synchronized, predictable manner. Port hopping provides enhanced security through obscurity while maintaining seamless connectivity between authenticated peers.
+The port hopping system provides enhanced security through traffic obfuscation by continuously changing communication ports in synchronized 500ms intervals. All port sequences are cryptographically derived from ECDH shared secrets, ensuring only authenticated peers can predict and follow port transitions.
+
+**Maximum Port Range Usage (1024-65535):**
+The protocol uses the maximum realistic port range (all non-privileged ports) for hopping operations, providing several advantages:
+- **Maximum Security**: 64,512 available ports provide maximum obfuscation and unpredictability
+- **Enhanced Performance**: Larger port space reduces predictability and improves security
 
 ## Purpose and Rationale
 
 Port hopping serves several critical security and operational functions:
 
-- **Traffic Obfuscation**: Makes protocol traffic harder to identify and target by network monitors
-- **DPI Evasion**: Complicates Deep Packet Inspection by distributing traffic across multiple ports
-- **Attack Surface Reduction**: Limits exposure by constantly changing the network access point
-- **Load Distribution**: Spreads network load across multiple ports for better performance
-- **Network Resilience**: Provides redundancy if specific ports become blocked or filtered
+- **Traffic Obfuscation**: Makes protocol traffic harder to identify and target by network monitors and attackers
+- **DPI Evasion**: Complicates Deep Packet Inspection by distributing traffic across multiple ports dynamically
+- **Attack Surface Reduction**: Limits exposure by constantly changing the network access point and communication vectors
+- **Load Distribution**: Spreads network load across multiple ports for better performance and bandwidth utilization
+- **Network Resilience**: Provides redundancy if specific ports become blocked, filtered, or unavailable
+- **Collision Avoidance**: Ensures multiple parallel connections between peers use different ports to prevent conflicts
 
-The port hopping algorithm uses cryptographic techniques to ensure that only authenticated peers can predict port sequences, while maintaining perfect synchronization across all participants.
+The port hopping algorithm uses PBKDF2 derivation from ECDH shared secrets to ensure that only authenticated peers can predict port sequences, while maintaining perfect synchronization across all participants.
 
 ## Key Concepts
 
-- **Time Windows**: Fixed 500ms intervals that synchronize port changes across all peers
-- **PBKDF2-Based Port Derivation**: Port offsets derived from ECDH shared secret using PBKDF2 key derivation
+- **Time Windows**: Fixed 500ms intervals that synchronize port changes across all peers using UTC time
+- **PBKDF2-Based Port Derivation**: Port offsets derived from ECDH shared secret using PBKDF2 key derivation functions
 - **Session-Specific Sequences**: Each session uses unique port sequences derived from ephemeral DH key exchange
-- **16-bit Chunk Derivation**: Port parameters extracted from PBKDF2 output as 16-bit chunks per specification
+- **16-bit Chunk Derivation**: Port parameters extracted from PBKDF2 output as 16-bit chunks per protocol specification
 - **Clock Synchronization**: Precise time alignment ensures all peers hop to the same ports simultaneously
-- **Connection Offset**: Mechanisms to prevent port collisions between multiple parallel connections
+- **Connection Offset**: Cryptographic mechanisms to prevent port collisions between multiple parallel connections
+- **Adaptive Windows**: Dynamic port ranges that accommodate network delay variations
 
-## Port Calculation Specification
+## Time Window Calculation
 
-### Time Window Calculation
+### UTC-Based Time Windows
+
 ```pseudocode
 # Time windows are 500ms wide and based on UTC time from start of current day
 # This ensures synchronized port hopping across all peers regardless of timezone
@@ -42,128 +52,153 @@ The port hopping algorithm uses cryptographic techniques to ensure that only aut
 # - Milliseconds since start of day = (14*3600 + 30*60 + 25)*1000 + 123 = 52225123ms
 # - Time window = 52225123 // 500 = 104450 (window number)
 # - Port will be calculated using this window number
+
+function calculate_time_window(current_time_ms):
+    # Calculate time window number from UTC time
+    ms_per_day = 24 * 60 * 60 * 1000  # 86400000 ms
+    ms_since_day_start = current_time_ms % ms_per_day
+    
+    time_window = ms_since_day_start // HOP_INTERVAL_MS
+    return time_window
+
+function get_current_time_window():
+    # Get current time window for port calculation
+    current_utc_ms = get_current_utc_time_ms()
+    return calculate_time_window(current_utc_ms)
+
+function get_synchronized_time_window():
+    # Get time window using synchronized time from time sync module
+    synchronized_time = get_synchronized_time()  # From time sync module
+    return calculate_time_window(synchronized_time)
+
+function calculate_next_hop_time():
+    # Calculate exact time of next port hop
+    current_window = get_synchronized_time_window()
+    next_window = current_window + 1
+    
+    synchronized_time = get_synchronized_time()
+    ms_since_day_start = synchronized_time % MILLISECONDS_PER_DAY
+    
+    next_hop_ms = next_window * HOP_INTERVAL_MS
+    current_utc_day_start = synchronized_time - ms_since_day_start
+    
+    return current_utc_day_start + next_hop_ms
+
+function time_until_next_hop():
+    # Calculate time remaining until next port hop
+    next_hop_time = calculate_next_hop_time()
+    current_time = get_synchronized_time()
+    
+    return max(0, next_hop_time - current_time)
 ```
 
-### Connection Offset Derivation for Multiple Parallel Connections
+## Connection Offset Derivation
+
+### ECDH-Based Port Parameter Derivation
 
 ```pseudocode
-function derive_connection_offset_from_ecdh(shared_secret, client_pubkey, server_pubkey, session_id):
-    # Derive unique port offset for this connection from ECDH shared secret
-    # Uses PBKDF2 to extract port parameters as 16-bit chunks
+function derive_session_port_parameters(ecdh_shared_secret, client_pubkey, server_pubkey, session_id):
+    # Derive simplified port hopping parameters from ECDH shared secret
+    # No collision avoidance needed - packets routed by session ID
     
     # Create session-specific salt combining public keys and session ID
-    salt = SHA256(client_pubkey || server_pubkey || session_id.to_bytes(8, 'big') || b"port_offset_v2")
+    salt = SHA256(client_pubkey || server_pubkey || session_id.to_bytes(8, 'big') || b"port_derivation_v3")
     
     # Use PBKDF2 to derive port material from ECDH shared secret
     port_material = PBKDF2_HMAC_SHA256(
-        password = shared_secret,
+        password = ecdh_shared_secret,
         salt = salt,
         iterations = PBKDF2_ITERATIONS_PORT,
-        key_length = 12     # 96 bits = 6 chunks of 16 bits each
+        key_length = 12     # 96 bits = 6 chunks of 16 bits each (simplified)
     )
     
-    # Extract as 16-bit chunks as per specification
+    # Extract as 16-bit chunks as per protocol specification
     chunks = []
     for i in range(0, 12, 2):  # 6 chunks total
         chunk = bytes_to_uint16(port_material[i:i+2])
         chunks.append(chunk)
     
-    # Derive port parameters from chunks
-    base_offset = chunks[0] % PORT_RANGE         # Primary port offset (16-bit)
-    hop_interval = 500 + (chunks[1] % 500)       # 500-1000ms interval variance
-    sequence_seed = chunks[2] << 16 | chunks[3]  # 32-bit sequence seed from chunks 2-3
-    collision_offset = chunks[4] % 1024          # Secondary collision avoidance
-    time_variance = chunks[5] % 100              # Up to 100ms time variance
+    # Derive simplified port parameters (no collision avoidance)
+    port_seed = chunks[0] << 16 | chunks[1]              # 32-bit primary port seed
+    hop_sequence_seed = chunks[2] << 16 | chunks[3]      # 32-bit hop sequence seed  
+    time_variance = chunks[4] % 100                      # Up to 100ms time variance
+    hop_pattern_seed = chunks[5]                         # 16-bit pattern seed
     
     return {
-        'base_offset': base_offset,
-        'hop_interval': hop_interval,
-        'sequence_seed': sequence_seed,
-        'collision_offset': collision_offset,
-        'time_variance': time_variance
+        'port_seed': port_seed,
+        'hop_sequence_seed': hop_sequence_seed,
+        'time_variance': time_variance,
+        'hop_pattern_seed': hop_pattern_seed
     }
 
-function calculate_dynamic_hop_interval(session_keys, time_window):
-    # Calculate dynamic hop interval using ECDH-derived parameters
-    base_interval = HOP_INTERVAL_MS  # Standard 500ms
-    variance = session_keys.time_sync_offset % 200  # Up to 200ms variance
-    seed_factor = (session_keys.hop_sequence_seed >> 16) % 100  # 0-99ms additional variance
-    
-    # Vary interval based on derived parameters to make timing less predictable
-    dynamic_interval = base_interval + variance + seed_factor
-    
-    # Ensure interval stays within reasonable bounds
-    return max(200, min(dynamic_interval, 1000))  # 200ms to 1000ms range
+function derive_connection_offset_from_ecdh(shared_secret, client_pubkey, server_pubkey, session_id):
+    # Simplified version for existing connections - derive just the offset
+    port_params = derive_session_port_parameters(shared_secret, client_pubkey, server_pubkey, session_id)
+    return port_params.connection_offset
 ```
 
-### Optimized Port Calculation Algorithm
+### Port Calculation Algorithm
 
 ```pseudocode
-function calculate_port_with_connection_offset(connection_offset, time_window):
-    # OPTIMIZED: Simple arithmetic using pre-calculated offset from ECDH derivation
-    # This eliminates expensive cryptographic operations on every hop
-    
-    # Calculate base port for this time window (shared algorithm, no per-connection crypto)
-    base_port = calculate_base_port_for_time_window(time_window)
-    
-    # Apply connection-specific offset (derived once from ECDH during connection setup)
-    port_range = MAX_PORT - MIN_PORT + 1
-    final_port = MIN_PORT + ((base_port - MIN_PORT + connection_offset) % port_range)
-    
-    return final_port
-
 function calculate_base_port_for_time_window(time_window):
     # Calculate the base port for any given time window
-    # This algorithm is shared across all connections and doesn't require session keys
+    # This algorithm is shared across all connections and provides the base sequence
     
-    # Use a simple but unpredictable function based on time window
-    # This provides port hopping behavior without per-connection crypto overhead
-    
-    # Simple hash-based calculation for base port sequence
+    # Use deterministic but unpredictable function based on time window
     time_bytes = time_window.to_bytes(8, 'big')
-    hash_result = SHA256(time_bytes || b"base_port_v1")
+    hash_result = SHA256(time_bytes || b"base_port_sequence_v2")
     
-    # Extract port value from hash
+    # Extract port value from hash (use multiple hash outputs for better distribution)
     port_value = bytes_to_uint32(hash_result[0:4])
     port_range = MAX_PORT - MIN_PORT + 1
     base_port = MIN_PORT + (port_value % port_range)
     
     return base_port
 
-function get_current_session_port(connection_offset):
-    # OPTIMIZED: Get the current port using pre-calculated connection offset
-    current_time = get_current_time_ms()
-    current_time_window = calculate_time_window(current_time)
+function calculate_port_for_time_window(port_params, time_window):
+    # Calculate port using simplified algorithm - full port range available
+    # Combines time window with session-specific port seed for maximum distribution
     
-    return calculate_port_with_connection_offset(connection_offset, current_time_window)
+    # Combine time window and port seed for this hop
+    combined_seed = (time_window * 0x9E3779B9) ^ port_params.port_seed  # Golden ratio multiplier
+    
+    # Apply hop sequence modification
+    hop_modifier = (port_params.hop_sequence_seed >> (time_window % 16)) & 0xFFFF
+    final_seed = combined_seed ^ hop_modifier
+    
+    # Calculate port within full available range
+    port_value = final_seed % PORT_RANGE
+    final_port = MIN_PORT + port_value
+    
+    # Ensure port is within valid range (should always be true with proper modulo)
+    return max(MIN_PORT, min(final_port, MAX_PORT))
 
-function get_next_session_port(connection_offset):
-    # OPTIMIZED: Get the next port using pre-calculated connection offset
-    current_time = get_current_time_ms()
-    next_time = current_time + HOP_INTERVAL_MS  # Use standard interval
-    next_time_window = calculate_time_window(next_time)
-    
-    return calculate_port_with_connection_offset(connection_offset, next_time_window)
+function get_current_session_port(port_params):
+    # Get the current port using simplified calculation
+    current_time_window = get_synchronized_time_window()
+    return calculate_port_for_time_window(port_params, current_time_window)
+
+function get_next_session_port(port_params):
+    # Get the next port using simplified calculation
+    current_time_window = get_synchronized_time_window()
+    next_time_window = current_time_window + 1
+    return calculate_port_for_time_window(port_params, next_time_window)
+
+function get_port_for_time_window(port_params, time_window):
+    # Get port for any specific time window using simplified calculation
+    return calculate_port_for_time_window(port_params, time_window)
 ```
 
-## Adaptive Transmission Delay Handling
+## Adaptive Port Windows
 
-The port hopping mechanism integrates with the adaptive delay system to provide optimal balance between security and reliability. For complete implementation details of the adaptive delay algorithms, measurements, and negotiation protocols, see **13-delay-tuning.md**.
+### Dynamic Port Range Calculation
 
 ```pseudocode
-function get_current_port_with_adaptive_delay_allowance(connection_offset):
-    # Uses delay window determined by adaptive delay tuning (see 13-delay-tuning.md)
+function calculate_ports_for_delay_window(port_params, delay_window):
+    # Calculate all valid ports for current delay window using simplified algorithm
+    # With full port range and session ID routing, duplicates are much less likely
     
-    # Get current effective delay window from adaptive delay system (see 13-delay-tuning.md)
-    effective_delay_window = get_effective_delay_window()
-    
-    # Calculate ports for the delay window using optimized approach
-    return calculate_ports_for_delay_window(connection_offset, effective_delay_window)
-
-function calculate_ports_for_delay_window(connection_offset, delay_window):
-    current_time = get_current_time_ms()
-    current_time_window = calculate_time_window(current_time)
-    
+    current_time_window = get_synchronized_time_window()
     ports = []
     
     # Calculate symmetric window around current time
@@ -173,77 +208,277 @@ function calculate_ports_for_delay_window(connection_offset, delay_window):
     
     for offset in range(start_offset, end_offset + 1):
         time_window = current_time_window + offset
-        port = calculate_port_with_connection_offset(connection_offset, time_window)
+        port = calculate_port_for_time_window(port_params, time_window)
         ports.append(port)
     
-    return ports
+    # With 64K port range, duplicates are extremely rare, but handle them anyway
+    unique_ports = list(dict.fromkeys(ports))  # Preserves order, removes duplicates
+    
+    return unique_ports
+
+function get_current_port_with_adaptive_delay_allowance(port_params):
+    # Get ports for current delay window from adaptive delay system
+    effective_delay_window = get_effective_delay_window()  # From adaptive delay module
+    
+    return calculate_ports_for_delay_window(port_params, effective_delay_window)
+
+function should_listen_on_port(port, port_params, max_delay_window):
+    # Determine if we should listen on a specific port given delay tolerances
+    current_ports = calculate_ports_for_delay_window(port_params, max_delay_window)
+    return port in current_ports
+
+function get_future_ports(port_params, num_windows):
+    # Get ports for next N time windows for preemptive listening
+    current_time_window = get_synchronized_time_window()
+    future_ports = []
+    
+    for i in range(1, num_windows + 1):
+        future_window = current_time_window + i
+        port = calculate_port_for_time_window(port_params, future_window)
+        future_ports.append(port)
+    
+    return future_ports
 ```
 
-## Port Collision Avoidance for Multiple Parallel Connections
+## Session ID-Based Packet Routing
 
-### Design Overview
-
-When multiple connections exist between the same two hosts, each connection must use different ports at any given time to prevent datagram delivery conflicts. The solution uses **cryptographic derivation** of connection-specific port offsets without exposing these offsets during connection establishment.
-
-### Key Security Properties
-
-1. **Zero Exposure**: Connection offsets are never transmitted or exposed during handshake
-2. **Cryptographic Randomness**: Each connection gets a unique, unpredictable offset derived from HKDF
-3. **Domain Separation**: HKDF ensures different connections produce independent offsets
-4. **Collision Resistance**: 12-bit offset space (4096 values) provides sufficient separation
-5. **Deterministic**: Both endpoints derive the same offset from the same connection parameters
-
-### Collision Avoidance Mechanism
-
-```pseudocode
-# Example: Two parallel connections between Host A and Host B
-
-Connection 1:
-- connection_id = 0x1234567890ABCDEF
-- Derived offset = 0x042 (66 decimal)
-- Port calculation includes offset 66
-
-Connection 2:
-- connection_id = 0xFEDCBA0987654321  
-- Derived offset = 0x7A1 (1953 decimal)
-- Port calculation includes offset 1953
-
-# At any time window, these connections use different port ranges:
-# Connection 1: ports in range [base_port + 66*offset_multiplier]
-# Connection 2: ports in range [base_port + 1953*offset_multiplier]
-# No collision possible between the two connections
-```
-
-### Connection ID Generation for Collision Avoidance
-
-```pseudocode
-function generate_connection_id(local_endpoint, remote_endpoint, local_random):
-    # Generate unique connection ID that ensures different connections
-    # get different offsets even if endpoints are the same
+```pseudocode  
+function generate_unique_session_id():
+    # Generate cryptographically unique session ID for packet routing
+    timestamp_ms = get_current_time_ms()
+    random_entropy = get_secure_random_bytes(16)  # 128-bit random
+    local_endpoint = get_local_endpoint_bytes()
+    remote_endpoint = get_remote_endpoint_bytes()
     
-    # Use local random entropy to ensure uniqueness
-    local_bytes = endpoint_to_bytes(local_endpoint)
-    remote_bytes = endpoint_to_bytes(remote_endpoint)
-    timestamp_bytes = uint64_to_bytes(get_current_time_ms())
-    random_bytes = get_secure_random_bytes(16)  # 128-bit random
+    # Combine sources for unique session ID
+    id_material = (
+        timestamp_ms.to_bytes(8, 'big') ||
+        random_entropy ||
+        local_endpoint ||
+        remote_endpoint ||
+        b"session_id_v3"
+    )
     
-    # Combine all sources for unique connection ID
-    id_material = local_bytes || remote_bytes || timestamp_bytes || random_bytes
-    
-    # Hash to create 64-bit connection ID
+    # Hash to create 64-bit session ID
     hash_result = SHA256(id_material)
-    connection_id = bytes_to_uint64(hash_result[0:8])
+    session_id = bytes_to_uint64(hash_result[0:8])
     
-    return connection_id
+    return session_id
+
+function route_packet_by_session_id(packet):
+    # Route incoming packet to correct session based on session ID
+    # No port collision concerns - packet destination determined by session ID
+    
+    session_id = packet.session_id
+    target_session = lookup_session_by_id(session_id)
+    
+    if target_session == null:
+        # Unknown session ID - may be expired or invalid
+        log_unknown_session_packet(session_id, packet.source_port)
+        return ERROR_SESSION_NOT_FOUND
+    
+    # Forward packet to appropriate session handler
+    return target_session.process_packet(packet)
+
+function is_valid_session_port(session_id, source_port, time_window):
+    # Verify that packet arrived on expected port for this session and time window
+    session = lookup_session_by_id(session_id)
+    
+    if session == null:
+        return false
+    
+    expected_port = calculate_port_for_time_window(session.port_params, time_window)
+    return source_port == expected_port
 ```
 
-### Port Range Management
+## Port Transition Management
 
-The 64,512 available ports (1024-65535) are divided into offset ranges:
+### Synchronized Port Hopping
 
-- **Base Range**: 48,384 ports for base port calculation
-- **Offset Range**: 16,128 ports for connection offsets  
-- **Maximum Connections**: 4,096 parallel connections supported
-- **Per-Connection Range**: ~4 ports per connection offset
+```pseudocode
+function schedule_port_hop(port_params):
+    # Schedule next port hop with precise timing
+    next_hop_time = calculate_next_hop_time()
+    current_time = get_synchronized_time()
+    
+    delay_until_hop = next_hop_time - current_time
+    
+    if delay_until_hop > 0:
+        schedule_timer_callback(delay_until_hop, execute_port_hop, port_params)
+    else:
+        # Time has already passed - hop immediately
+        execute_port_hop(port_params)
 
-This design ensures sufficient port space while maintaining security and collision avoidance.
+function execute_port_hop(port_params):
+    # Execute synchronized port hop
+    old_port = get_current_session_port(port_params)
+    
+    # Calculate new port for current time window
+    new_port = get_current_session_port(port_params)
+    
+    if old_port != new_port:
+        # Perform port transition
+        transition_to_new_port(old_port, new_port, port_params)
+    
+    # Schedule next hop
+    schedule_port_hop(port_params)
+
+function transition_to_new_port(old_port, new_port, port_params):
+    # Gracefully transition from old port to new port
+    
+    # 1. Start listening on new port
+    bind_to_port(new_port)
+    
+    # 2. Continue listening on old port briefly for delayed packets
+    delay_window = get_port_transition_delay_window()
+    schedule_timer_callback(delay_window, unbind_from_port, old_port)
+    
+    # 3. Update current port state
+    session_state.current_port = new_port
+    session_state.port_history.append({
+        'port': old_port,
+        'end_time': get_current_time_ms(),
+        'window': get_synchronized_time_window() - 1
+    })
+    
+    # 4. Trim port history
+    if len(session_state.port_history) > PORT_HISTORY_SIZE:
+        session_state.port_history.pop(0)
+    
+    log_port_hop(old_port, new_port, get_synchronized_time_window())
+
+function get_port_transition_delay_window():
+    # Calculate delay window for port transition overlap
+    # Accounts for network delay and clock synchronization tolerances
+    
+    base_delay = TIME_SYNC_TOLERANCE_MS * 2  # Double the sync tolerance
+    network_delay = get_estimated_network_delay()  # From RTT measurements
+    safety_margin = SAFETY_MARGIN_MS
+    
+    total_delay = base_delay + network_delay + safety_margin
+    
+    # Ensure reasonable bounds
+    return max(50, min(total_delay, 500))  # 50ms to 500ms range
+
+function preemptive_port_binding(port_params, lookahead_windows):
+    # Preemptively bind to future ports for seamless transitions
+    future_ports = get_future_ports(port_params, lookahead_windows)
+    
+    for port in future_ports:
+        if not is_port_bound(port):
+            try:
+                bind_to_port(port)
+                log_preemptive_binding(port)
+            except PortBindingException:
+                log_port_binding_failure(port)
+
+function cleanup_old_port_bindings():
+    # Clean up old port bindings that are no longer needed
+    current_window = get_synchronized_time_window()
+    
+    for port_info in session_state.port_history:
+        window_age = current_window - port_info.window
+        
+        if window_age > MAX_PORT_HISTORY_RETENTION:
+            if is_port_bound(port_info.port):
+                unbind_from_port(port_info.port)
+                log_port_cleanup(port_info.port)
+```
+
+## Port Range Management
+
+### Port Space Allocation
+
+```pseudocode
+# Port range constants and management (maximum range with session ID routing)
+PORT_SPACE_TOTAL = MAX_PORT - MIN_PORT + 1      # 64,512 total non-privileged ports (1024-65535)
+MAX_PARALLEL_CONNECTIONS = 65536               # Theoretical maximum (limited by session ID space)
+PRACTICAL_CONNECTION_LIMIT = 10000             # Practical limit for most deployments
+
+function validate_port_range_parameters():
+    # Validate port range configuration is consistent
+    assert MIN_PORT >= 1024, "Minimum port must be 1024 or higher (non-privileged)"
+    assert MAX_PORT <= 65535, "Maximum port must be 65535 or lower"
+    assert PORT_SPACE_TOTAL > 0, "Port space must be positive"
+    
+    log_port_range_info("Using maximum port range", PORT_SPACE_TOTAL, "ports available")
+    
+    return true
+
+function calculate_port_utilization():
+    # Calculate current port space utilization with simplified metrics
+    active_connections = get_active_connection_count()
+    practical_max = PRACTICAL_CONNECTION_LIMIT
+    
+    utilization_percentage = (active_connections / practical_max) * 100
+    
+    if utilization_percentage > 90:  # 90% threshold for practical limit
+        log_high_connection_count_warning(active_connections, utilization_percentage)
+    
+    return utilization_percentage
+
+function get_available_port_range():
+    # Get the full available port range (simplified - no per-connection restrictions)
+    return {
+        'min_port': MIN_PORT,
+        'max_port': MAX_PORT,
+        'range_size': PORT_SPACE_TOTAL,
+        'note': 'Full range available - packets routed by session ID'
+    }
+```
+
+## Integration with Network Adaptation
+
+### Adaptive Delay Window Integration
+
+```pseudocode
+function integrate_with_adaptive_delay_system(port_params):
+    # Integration point with adaptive delay tuning system
+    # Simplified with session ID routing - no port collision concerns
+    
+    # Get current network conditions
+    network_conditions = get_current_network_conditions()
+    
+    # Calculate optimal delay window based on network performance
+    optimal_delay_window = calculate_optimal_delay_window(network_conditions)
+    
+    # Get ports for optimal delay window using simplified calculation
+    current_ports = calculate_ports_for_delay_window(port_params, optimal_delay_window)
+    
+    # Update port listening strategy (simplified)
+    update_port_listening_strategy(current_ports, optimal_delay_window)
+    
+    return current_ports
+
+function update_port_listening_strategy(required_ports, delay_window):
+    # Update which ports we're listening on based on delay requirements
+    currently_bound_ports = get_currently_bound_ports()
+    
+    # Bind to new required ports
+    for port in required_ports:
+        if port not in currently_bound_ports:
+            bind_to_port(port)
+    
+    # Unbind from unnecessary ports (with safety margin)
+    safety_ports = calculate_ports_for_delay_window(session_state.port_params, delay_window + 2)
+    for port in currently_bound_ports:
+        if port not in safety_ports:
+            unbind_from_port(port)
+
+function optimize_port_hopping_for_network_conditions():
+    # Optimize port hopping strategy based on current network conditions
+    network_stats = get_network_performance_stats()
+    
+    # Adjust parameters based on network performance
+    if network_stats.packet_loss_rate > 0.02:  # > 2% loss
+        # Increase delay window for lossy networks
+        increase_delay_window_tolerance()
+    
+    if network_stats.average_latency > 200:  # > 200ms latency
+        # Extend port transition overlap for high latency
+        extend_port_transition_overlap()
+    
+    if network_stats.jitter > 100:  # > 100ms jitter
+        # Use more conservative port timing
+        enable_conservative_port_timing()
+```

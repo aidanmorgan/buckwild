@@ -1,6 +1,50 @@
-# Overview
+# Protocol Overview and Specification
 
-This document defines the complete specification for connection establishment, port hopping synchronization, and recovery mechanisms in the frequency hopping network system. The protocol ensures reliable communication while maintaining synchronized port transitions between endpoints using ephemeral Diffie-Hellman key exchange, privacy-preserving PSK discovery, and cryptographically derived parameters.
+## Table of Contents
+
+This document defines a complete specification for connection management and synchronization protocol for frequency hopping networks.
+
+### Document Organization
+
+**Part I: Protocol Foundation**
+1. [Protocol Overview](01-protocol-overview.md) - Introduction, design goals, and architecture
+2. [Core Definitions](02-core-definitions.md) - Constants, error codes, and naming conventions  
+3. [Packet Architecture](03-packet-architecture.md) - Packet types, formats, and headers
+
+**Part II: Cryptographic Framework**
+4. [ECDH Cryptography](04-ecdh-cryptography.md) - Ephemeral key exchange and parameter derivation
+5. [PSK Discovery](05-psk-discovery.md) - Privacy-preserving set intersection for key discovery
+
+**Part III: Connection Management**
+6. [Connection Lifecycle](06-connection-lifecycle.md) - State machine and connection management
+7. [Data Transmission](07-data-transmission.md) - Flow control and fragmentation
+8. [Timeout and Reliability](08-timeout-and-reliability.md) - RTO calculation and retry mechanisms
+
+**Part IV: Network Synchronization** 
+9. [Time Synchronization](09-time-synchronization.md) - Precise time coordination between peers
+10. [Port Hopping](10-port-hopping.md) - Synchronized port transitions for security
+11. [Adaptive Networking](11-adaptive-networking.md) - Dynamic delay tuning and optimization
+
+**Part V: Resilience and Recovery**
+12. [Recovery Mechanisms](12-recovery-mechanisms.md) - Multi-layer failure recovery strategies
+13. [Edge Case Handling](13-edge-case-handling.md) - Boundary conditions and exceptional scenarios
+
+**Part VI: Reference Materials**
+14. [Sequence Diagrams](14-sequence-diagrams.md) - Visual protocol flows and interactions
+
+---
+
+## Abstract
+
+**⚠️ DO NOT USE THIS PROTOCOL IN THE REAL WORLD - IT IS PURELY FOR LEARNING PURPOSES ⚠️**
+
+This document defines a complete specification for connection establishment, port hopping synchronization, and recovery mechanisms in frequency hopping network systems. The protocol ensures reliable communication while maintaining synchronized port transitions between endpoints using ephemeral Diffie-Hellman key exchange, privacy-preserving PSK discovery, and cryptographically derived parameters.
+
+The specification includes comprehensive mechanisms for congestion control, flow control, fragmentation, cryptographic operations, and robust recovery procedures to handle various failure scenarios with perfect forward secrecy.
+
+## License
+
+This specification is provided under an open license for implementation and use in compatible systems.
 
 ## Design Goals
 
@@ -45,12 +89,6 @@ The protocol operates through several integrated subsystems:
 7. **Fragmentation Engine**: Handles packet fragmentation and reassembly
 8. **Time Synchronization Engine**: Maintains synchronized time references between endpoints
 
-## Key Features
+## Document Status
 
-- **ECDH-Based Connection Tracking**: Comprehensive state machine manages ephemeral key-based connections
-- **PBKDF2 Parameter Derivation**: All session parameters cryptographically derived from ECDH shared secrets
-- **Privacy-Preserving Discovery**: Bloom filter-based PSK discovery protects key collections
-- **Comprehensive Error Handling**: Detailed error codes and ECDH-based recovery procedures
-- **Security by Design**: All operations use ECDH and assume hostile network environments
-- **Scalable Architecture**: Support for multiple concurrent ECDH connections per endpoint
-- **Perfect Forward Secrecy**: Ephemeral keys protect past communications
+This is a complete protocol specification that defines all aspects of the frequency hopping network communication system, including connection management, synchronization, security, and recovery mechanisms.

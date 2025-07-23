@@ -1,8 +1,10 @@
-# Protocol Sequence Diagrams
+# Protocol Sequence Diagrams and Flows
+
+This document provides comprehensive sequence diagrams illustrating all critical protocol flows and interactions, showing message exchanges, state transitions, and timing relationships between peers during various protocol operations.
 
 ## Overview
 
-This document provides comprehensive sequence diagrams illustrating all critical protocol flows and interactions. These diagrams show the message exchanges, state transitions, and timing relationships between peers during various protocol operations including connection establishment, data transmission, recovery scenarios, and connection termination.
+The sequence diagrams demonstrate the dynamic behavior of the protocol by visualizing the message flows, timing dependencies, and state coordination that occur during connection establishment, data transmission, recovery scenarios, and connection termination. These diagrams serve as essential implementation guides and debugging aids.
 
 ## Purpose and Rationale
 
@@ -13,20 +15,11 @@ Sequence diagrams serve essential documentation and implementation functions:
 - **Debugging Aid**: Enables troubleshooting by showing expected message flows versus actual behavior
 - **Protocol Validation**: Allows verification that implementations follow the correct sequence of operations
 - **Edge Case Documentation**: Illustrates how the protocol handles various error conditions and recovery scenarios
+- **Integration Testing**: Provides test scenarios for validating protocol implementation correctness
 
 The diagrams complement the technical specifications by showing the dynamic behavior and interactions that emerge from the static protocol definitions.
 
-## Key Concepts
-
-- **Message Flow**: The sequence and direction of packet exchanges between peers
-- **State Synchronization**: How peer states change in coordination during protocol operations
-- **Timing Dependencies**: Critical timing relationships and synchronization requirements
-- **Error Handling**: How the protocol responds to and recovers from various failure conditions
-- **Parallel Operations**: Concurrent activities that can occur simultaneously during protocol operation
-- **Optimized Headers**: All packets use the 50-byte optimized common header format for efficiency
-- **Sub-Type Architecture**: CONTROL, MANAGEMENT, and DISCOVERY packets use sub-types for functionality consolidation
-
-## 1. Connection Establishment Flow
+## 1. Connection Establishment Flows
 
 ### 1.1 Basic Connection Establishment (No PSK Discovery)
 
@@ -198,16 +191,16 @@ sequenceDiagram
     participant Peer A
     participant Peer B
     
-    Note over Peer A,Peer B: Time Window N (Port 5432)
-    Peer A->>Peer B: DATA (via port 5432)
-    Peer B->>Peer A: ACK (via port 5432)
+    Note over Peer A,Peer B: Time Window N (Port 52432)
+    Peer A->>Peer B: DATA (via port 52432)
+    Peer B->>Peer A: ACK (via port 52432)
     
     Note over Peer A,Peer B: 500ms Time Window Boundary
     Note over Peer A,Peer B: Both peers calculate new port
-    Note over Peer A,Peer B: Time Window N+1 (Port 7891)
+    Note over Peer A,Peer B: Time Window N+1 (Port 57891)
     
-    Peer A->>Peer B: DATA (via port 7891)
-    Peer B->>Peer A: ACK (via port 7891)
+    Peer A->>Peer B: DATA (via port 57891)
+    Peer B->>Peer A: ACK (via port 57891)
     
     Note over Peer A,Peer B: Synchronized port hopping continues
 ```
@@ -279,29 +272,29 @@ sequenceDiagram
     Note right of Client: Resume normal data flow
 ```
 
-### 4.3 Session Rekeying
+### 4.3 ECDH-Based Session Rekeying
 
 ```mermaid
 sequenceDiagram
     participant Peer A
     participant Peer B
     
-    Note over Peer A: Key rotation needed
+    Note over Peer A: Authentication failures trigger rekey
     
     Peer A->>Peer B: MANAGEMENT (Type 0x0D, Sub REKEY_REQUEST 0x01)
-    Note right of Peer A: - Rekey nonce<br/>- New key commitment<br/>- Reserved fields
+    Note right of Peer A: - Rekey nonce<br/>- ECDH Public Key<br/>- Cryptographic proof
     
     Peer B->>Peer A: MANAGEMENT (Type 0x0D, Sub REKEY_RESPONSE 0x02)
-    Note left of Peer B: - Same rekey nonce<br/>- Peer key commitment<br/>- Confirmation HMAC
+    Note left of Peer B: - Same rekey nonce<br/>- ECDH Public Key<br/>- Shared secret hash
     
-    Note over Peer A,Peer B: Both derive new session key
-    Note over Peer A,Peer B: Atomic key switch
+    Note over Peer A,Peer B: Both derive new session keys from ECDH
+    Note over Peer A,Peer B: Atomic key switch with forward secrecy
     
     Peer A->>Peer B: DATA (Type 0x04)
-    Note right of Peer A: First packet with new key
+    Note right of Peer A: First packet with ECDH-derived key
     
     Peer B->>Peer A: ACK (Type 0x03)
-    Note left of Peer B: Confirms new key works
+    Note left of Peer B: Confirms new ECDH key works
 ```
 
 ### 4.4 Connection Termination on Recovery Failure
@@ -385,12 +378,12 @@ sequenceDiagram
     
     Note over Peer A: Receives auth error
     Peer A->>Peer B: MANAGEMENT (Type 0x0D, Sub REKEY_REQUEST 0x01)
-    Note right of Peer A: Attempts key recovery
+    Note right of Peer A: Attempts ECDH key recovery
     
     Peer B->>Peer A: MANAGEMENT (Type 0x0D, Sub REKEY_RESPONSE 0x02)
-    Note left of Peer B: Participates in rekey
+    Note left of Peer B: Participates in ECDH rekey
     
-    Note over Peer A,Peer B: Authentication restored
+    Note over Peer A,Peer B: Authentication restored with new ECDH keys
 ```
 
 ### 6.2 Protocol Error with Recovery
@@ -422,7 +415,7 @@ sequenceDiagram
 
 ## 7. Heartbeat and Keep-Alive
 
-### 7.1 Normal Heartbeat Exchange
+### 7.1 Normal Heartbeat Exchange with Adaptive Networking
 
 ```mermaid
 sequenceDiagram
@@ -465,169 +458,9 @@ sequenceDiagram
     Note over Peer A,Peer B: Connection and timing restored
 ```
 
-## 8. Multiple Connection Scenarios
+## 8. Recovery Escalation Framework
 
-### 8.1 Parallel Connection Establishment
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Server
-    
-    Note over Client,Server: Connection 1 Establishment
-    Client->>Server: SYN (Connection ID: 1234, Port offset derived)
-    Server->>Client: SYN-ACK (Connection ID: 1234)
-    Client->>Server: ACK (Connection ID: 1234)
-    
-    Note over Client,Server: Connection 2 Establishment (Different offset)
-    Client->>Server: SYN (Connection ID: 5678, Different port offset)
-    Server->>Client: SYN-ACK (Connection ID: 5678)
-    Client->>Server: ACK (Connection ID: 5678)
-    
-    Note over Client,Server: Both connections active
-    Note over Client,Server: Different port ranges prevent collisions
-    
-    Client->>Server: DATA (Connection 1, Port range A)
-    Client->>Server: DATA (Connection 2, Port range B)
-    Server->>Client: ACK (Connection 1, Port range A)
-    Server->>Client: ACK (Connection 2, Port range B)
-```
-
-## 9. Edge Cases and Complex Scenarios
-
-### 9.1 Simultaneous Recovery Attempts
-
-```mermaid
-sequenceDiagram
-    participant Peer A
-    participant Peer B
-    
-    Note over Peer A,Peer B: Both detect issues simultaneously
-    
-    Peer A->>Peer B: CONTROL (Type 0x0C, Sub TIME_SYNC_REQUEST 0x01)
-    Peer B->>Peer A: CONTROL (Type 0x0C, Sub TIME_SYNC_REQUEST 0x01)
-    
-    Note over Peer A: Receives peer's request
-    Note over Peer B: Receives peer's request
-    
-    Note over Peer A: Lower endpoint initiates
-    Peer A->>Peer B: CONTROL (Type 0x0C, Sub TIME_SYNC_RESPONSE 0x02)
-    
-    Note over Peer B: Higher endpoint responds
-    Peer B->>Peer A: CONTROL (Type 0x0C, Sub TIME_SYNC_RESPONSE 0x02)
-    
-    Note over Peer A,Peer B: Recovery coordination successful
-```
-
-### 9.2 Cascading Recovery Scenario
-
-```mermaid
-sequenceDiagram
-    participant Peer A
-    participant Peer B
-    
-    Note over Peer A,Peer B: Time drift causes sequence issues
-    
-    Peer A->>Peer B: CONTROL (Type 0x0C, Sub TIME_SYNC_REQUEST 0x01)
-    Peer B->>Peer A: CONTROL (Type 0x0C, Sub TIME_SYNC_RESPONSE 0x02)
-    
-    Note over Peer A,Peer B: Time sync successful
-    
-    Peer A->>Peer B: DATA (Type 0x04)
-    Note right of Peer A: Still has sequence issues
-    
-    Peer B->>Peer A: ERROR (Type 0x09)
-    Note left of Peer B: Sequence still wrong
-    
-    Peer A->>Peer B: MANAGEMENT (Type 0x0D, Sub REPAIR_REQUEST 0x03)
-    Peer B->>Peer A: MANAGEMENT (Type 0x0D, Sub REPAIR_RESPONSE 0x04)
-    
-    Note over Peer A,Peer B: Full recovery complete
-    
-    Peer A->>Peer B: DATA (Type 0x04)
-    Peer B->>Peer A: ACK (Type 0x03)
-    
-    Note over Peer A,Peer B: Normal operation restored
-```
-
-## 10. PSK Discovery Failure Scenarios
-
-### 10.1 PSK Discovery Timeout and Retry
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Server
-    
-    Note over Client,Server: Initial Discovery Attempt
-    Client->>Server: DISCOVERY_REQUEST (Type 0x0E, Sub 0x01)
-    
-    Note over Client: 10 second timeout expires
-    Note over Client: No response received
-    
-    Note over Client: Retry 1 with exponential backoff
-    Client->>Server: DISCOVERY_REQUEST (Type 0x0E, Sub 0x01)
-    Note right of Client: - Same discovery ID<br/>- Increased timeout<br/>- Retry attempt flag
-    
-    Server->>Client: DISCOVERY_RESPONSE (Type 0x0E, Sub 0x02)
-    Note left of Server: - Response with PSK commitments<br/>- Valid response
-    
-    Client->>Server: DISCOVERY_CONFIRM (Type 0x0E, Sub 0x03)
-    Note right of Client: - Successful PSK selection<br/>- Proceed to handshake
-    
-    Note over Client,Server: Recovery successful after retry
-```
-
-### 10.2 PSK Discovery No Common Key Found
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Server
-    
-    Client->>Server: DISCOVERY_REQUEST (Type 0x0E, Sub 0x01)
-    Note right of Client: - Discovery ID<br/>- Client PSK commitments<br/>- Challenge nonce
-    
-    Server->>Client: DISCOVERY_RESPONSE (Type 0x0E, Sub 0x02)
-    Note left of Server: - Empty PSK commitment list<br/>- No matching PSKs found<br/>- Error indication
-    
-    Note over Client: No compatible PSKs
-    Client->>Server: ERROR (Type 0x09)
-    Note right of Client: - Error: NO_COMMON_PSK<br/>- Connection terminated<br/>- No further attempts
-    
-    Note over Client,Server: Connection establishment failed
-```
-
-### 10.3 PSK Enumeration Attack Detection
-
-```mermaid
-sequenceDiagram
-    participant Attacker
-    participant Server
-    
-    Note over Attacker: Multiple rapid discovery attempts
-    
-    Attacker->>Server: DISCOVERY_REQUEST (Type 0x0E, Sub 0x01)
-    Note right of Attacker: Attempt 1: Invalid PSK probe
-    
-    Attacker->>Server: DISCOVERY_REQUEST (Type 0x0E, Sub 0x01)
-    Note right of Attacker: Attempt 2: Different PSK probe
-    
-    Attacker->>Server: DISCOVERY_REQUEST (Type 0x0E, Sub 0x01)
-    Note right of Attacker: Attempt 3: Another PSK probe
-    
-    Note over Server: Detects enumeration pattern
-    Note over Server: Rate limiting triggered
-    
-    Server->>Attacker: ERROR (Type 0x09)
-    Note left of Server: - Error: RATE_LIMITED<br/>- 5 minute block duration<br/>- No further responses
-    
-    Note over Server: IP blocked for enumeration
-```
-
-## 11. Complete Recovery Escalation Chain
-
-### 11.1 Full Recovery Escalation Sequence
+### 8.1 Complete Recovery Escalation Sequence
 
 ```mermaid
 sequenceDiagram
@@ -636,40 +469,35 @@ sequenceDiagram
     
     Note over Peer A,Peer B: Initial problem detected
     
-    Note over Peer A,Peer B: Stage 1: Time Resynchronization
+    Note over Peer A,Peer B: Level 1: Time Resynchronization
     Peer A->>Peer B: CONTROL (Type 0x0C, Sub TIME_SYNC_REQUEST 0x01)
     Peer B->>Peer A: CONTROL (Type 0x0C, Sub TIME_SYNC_RESPONSE 0x02)
     
     Note over Peer A: Time sync failed
-    Note over Peer A: Escalate to Stage 2
+    Note over Peer A: Escalate to Level 2
     
-    Note over Peer A,Peer B: Stage 2: Sequence Repair
+    Note over Peer A,Peer B: Level 2: Sequence Repair
     Peer A->>Peer B: MANAGEMENT (Type 0x0D, Sub REPAIR_REQUEST 0x03)
     Peer B->>Peer A: ERROR (Type 0x09)
     Note left of Peer B: Sequence repair failed
     
     Note over Peer A: Sequence repair failed
-    Note over Peer A: Escalate to Stage 3
+    Note over Peer A: Escalate to Level 3
     
-    Note over Peer A,Peer B: Stage 3: Session Rekeying
+    Note over Peer A,Peer B: Level 3: ECDH Session Rekeying
     Peer A->>Peer B: MANAGEMENT (Type 0x0D, Sub REKEY_REQUEST 0x01)
     Peer B->>Peer A: MANAGEMENT (Type 0x0D, Sub REKEY_RESPONSE 0x02)
     
-    Note over Peer A: Rekey validation failed
-    Note over Peer A: Escalate to Stage 4
+    Note over Peer A,Peer B: ECDH rekey successful
+    Note over Peer A,Peer B: Session fully restored with forward secrecy
     
-    Note over Peer A,Peer B: Stage 4: Emergency Recovery
-    Peer A->>Peer B: CONTROL (Type 0x0C, Sub EMERGENCY_REQUEST 0x04)
-    Peer B->>Peer A: CONTROL (Type 0x0C, Sub EMERGENCY_RESPONSE 0x05)
-    
-    Peer A->>Peer B: CONTROL (Type 0x0C, Sub EMERGENCY_VERIFY 0x07)
+    Peer A->>Peer B: DATA (Type 0x04)
     Peer B->>Peer A: ACK (Type 0x03)
     
-    Note over Peer A,Peer B: Emergency recovery successful
-    Note over Peer A,Peer B: Session fully restored
+    Note over Peer A,Peer B: Normal operation resumed
 ```
 
-### 11.2 Recovery Attempt Exhaustion
+### 8.2 Recovery Attempt Exhaustion
 
 ```mermaid
 sequenceDiagram
@@ -677,7 +505,7 @@ sequenceDiagram
     participant Peer B
     
     Note over Peer A: Maximum recovery attempts reached
-    Note over Peer A: All recovery types have failed
+    Note over Peer A: All recovery levels have failed
     
     Peer A->>Peer B: RST (Type 0x0B)
     Note right of Peer A: - Reset reason: RECOVERY_EXHAUSTED<br/>- Immediate termination<br/>- Session unrecoverable
@@ -689,9 +517,9 @@ sequenceDiagram
     Note over Peer A,Peer B: New connection required
 ```
 
-## 12. Advanced Fragmentation Scenarios
+## 9. Advanced Fragmentation Scenarios
 
-### 12.1 Fragment Timeout and Retransmission
+### 9.1 Fragment Timeout and Retransmission
 
 ```mermaid
 sequenceDiagram
@@ -720,7 +548,7 @@ sequenceDiagram
     Note left of Receiver: Acknowledges complete message
 ```
 
-### 12.2 Fragment Overlap Attack Detection
+### 9.2 Fragment Overlap Attack Detection
 
 ```mermaid
 sequenceDiagram
@@ -743,9 +571,9 @@ sequenceDiagram
     Note over Victim: Security violation logged
 ```
 
-## 13. Flow Control Edge Cases
+## 10. Flow Control and Congestion Management
 
-### 13.1 Zero Window Probing
+### 10.1 Zero Window Probing
 
 ```mermaid
 sequenceDiagram
@@ -779,7 +607,7 @@ sequenceDiagram
     Note right of Sender: Resume normal transmission
 ```
 
-### 13.2 Flow Control Deadlock Resolution
+### 10.2 Flow Control Deadlock Resolution
 
 ```mermaid
 sequenceDiagram
@@ -809,70 +637,60 @@ sequenceDiagram
     Note over Peer A,Peer B: Flow control restored
 ```
 
-## 14. Multi-Connection Collision Resolution
+## 11. Multi-Connection Management
 
-### 14.1 Connection Port Collision Detection
+### 11.1 Parallel Connection Establishment with Collision Avoidance
 
 ```mermaid
 sequenceDiagram
     participant Client
     participant Server
     
-    Note over Client,Server: Connection 1 established (ports 5000-5999)
+    Note over Client,Server: Connection 1 Establishment
+    Client->>Server: SYN (Session ID: 1234, ECDH offset derived)
+    Server->>Client: SYN-ACK (Session ID: 1234)
+    Client->>Server: ACK (Session ID: 1234)
+    
+    Note over Client,Server: Connection 2 Establishment (Different offset)
+    Client->>Server: SYN (Session ID: 5678, Different ECDH offset)
+    Server->>Client: SYN-ACK (Session ID: 5678)
+    Client->>Server: ACK (Session ID: 5678)
+    
+    Note over Client,Server: Both connections active
+    Note over Client,Server: Different ECDH-derived port ranges prevent collisions
+    
+    Client->>Server: DATA (Connection 1, Port range A)
+    Client->>Server: DATA (Connection 2, Port range B)
+    Server->>Client: ACK (Connection 1, Port range A)
+    Server->>Client: ACK (Connection 2, Port range B)
+```
+
+### 11.2 Connection Port Collision Detection and Resolution
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Server
+    
+    Note over Client,Server: Connection 1 established (uses full port range 1024-65535)
     
     Note over Client: Start Connection 2
-    Client->>Server: SYN (Connection 2, calculated port 5234)
-    Note right of Client: - Port collision with Connection 1<br/>- Same derived port range
+    Client->>Server: SYN (Connection 2, port 27234)
+    Note right of Client: - Different session ID<br/>- Full port range available<br/>- No collision concerns
     
-    Note over Server: Detects port collision
-    Server->>Client: ERROR (Type 0x09)
-    Note left of Server: - Error: PORT_COLLISION<br/>- Suggests offset adjustment<br/>- Collision resolution needed
+    Note over Server: Routes by session ID
+    Server->>Client: SYN-ACK (Connection 2, port 27234)
+    Note left of Server: - Session ID determines routing<br/>- Port collisions irrelevant<br/>- Simplified connection handling
     
-    Note over Client: Recalculate with new offset
-    Note over Client: Apply collision resolution offset
-    
-    Client->>Server: SYN (Connection 2, adjusted port 7234)
-    Note right of Client: - New port range (7000-7999)<br/>- Collision avoided<br/>- Unique offset applied
-    
-    Server->>Client: SYN-ACK (Connection 2)
-    Client->>Server: ACK (Connection 2)
+    Client->>Server: ACK (Connection 2, port 27234)
     
     Note over Client,Server: Both connections active
     Note over Client,Server: No port collisions
 ```
 
-### 14.2 Session ID Collision Resolution
+## 12. Security Attack Scenarios
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Server
-    
-    Client->>Server: SYN (Session ID: 0x123456789ABCDEF0)
-    Note right of Client: New connection attempt
-    
-    Note over Server: Session ID already exists
-    Note over Server: Active connection using same ID
-    
-    Server->>Client: ERROR (Type 0x09)
-    Note left of Server: - Error: SESSION_ID_COLLISION<br/>- Existing session detected<br/>- New ID required
-    
-    Note over Client: Generate new session ID
-    Note over Client: Add randomization salt
-    
-    Client->>Server: SYN (Session ID: 0x987654321FEDCBA0)
-    Note right of Client: - Different session ID<br/>- Collision resolved<br/>- Unique session
-    
-    Server->>Client: SYN-ACK
-    Client->>Server: ACK
-    
-    Note over Client,Server: New session established
-    Note over Client,Server: No ID conflicts
-```
-
-## 15. Advanced Security Scenarios
-
-### 15.1 Authentication Failure Cascade
+### 12.1 Authentication Failure Cascade and Auto-Rekey
 
 ```mermaid
 sequenceDiagram
@@ -896,22 +714,22 @@ sequenceDiagram
     Note right of Peer A: Authentication failure 3
     
     Note over Peer B: Threshold exceeded
-    Note over Peer B: Trigger automatic rekey
+    Note over Peer B: Trigger automatic ECDH rekey
     
     Peer B->>Peer A: MANAGEMENT (Type 0x0D, Sub REKEY_REQUEST 0x01)
-    Note left of Peer B: - Automatic rekey triggered<br/>- Security threshold exceeded<br/>- Key compromise suspected
+    Note left of Peer B: - Automatic ECDH rekey triggered<br/>- Security threshold exceeded<br/>- Key compromise suspected
     
     Peer A->>Peer B: MANAGEMENT (Type 0x0D, Sub REKEY_RESPONSE 0x02)
     
-    Note over Peer A,Peer B: New session key established
+    Note over Peer A,Peer B: New session key established with ECDH
     
     Peer A->>Peer B: DATA (Type 0x04, Valid HMAC)
     Peer B->>Peer A: ACK (Type 0x03)
     
-    Note over Peer A,Peer B: Authentication restored
+    Note over Peer A,Peer B: Authentication restored with forward secrecy
 ```
 
-### 15.2 Replay Attack Detection and Prevention
+### 12.2 Replay Attack Detection and Prevention
 
 ```mermaid
 sequenceDiagram
@@ -937,9 +755,84 @@ sequenceDiagram
     Note over Victim: Strengthens timestamp validation
 ```
 
-## 16. Network Adaptation Scenarios
+## 13. PSK Discovery Failure Scenarios
 
-### 16.1 MTU Discovery and Dynamic Fragmentation
+### 13.1 PSK Discovery No Common Key Found
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Server
+    
+    Client->>Server: DISCOVERY_REQUEST (Type 0x0E, Sub 0x01)
+    Note right of Client: - Discovery ID<br/>- Client PSK commitments<br/>- Challenge nonce
+    
+    Server->>Client: DISCOVERY_RESPONSE (Type 0x0E, Sub 0x02)
+    Note left of Server: - Empty PSK commitment list<br/>- No matching PSKs found<br/>- Error indication
+    
+    Note over Client: No compatible PSKs
+    Client->>Server: ERROR (Type 0x09)
+    Note right of Client: - Error: NO_COMMON_PSK<br/>- Connection terminated<br/>- No further attempts
+    
+    Note over Client,Server: Connection establishment failed
+```
+
+### 13.2 PSK Enumeration Attack Detection
+
+```mermaid
+sequenceDiagram
+    participant Attacker
+    participant Server
+    
+    Note over Attacker: Multiple rapid discovery attempts
+    
+    Attacker->>Server: DISCOVERY_REQUEST (Type 0x0E, Sub 0x01)
+    Note right of Attacker: Attempt 1: Invalid PSK probe
+    
+    Attacker->>Server: DISCOVERY_REQUEST (Type 0x0E, Sub 0x01)
+    Note right of Attacker: Attempt 2: Different PSK probe
+    
+    Attacker->>Server: DISCOVERY_REQUEST (Type 0x0E, Sub 0x01)
+    Note right of Attacker: Attempt 3: Another PSK probe
+    
+    Note over Server: Detects enumeration pattern
+    Note over Server: Rate limiting triggered
+    
+    Server->>Attacker: ERROR (Type 0x09)
+    Note left of Server: - Error: RATE_LIMITED<br/>- 5 minute block duration<br/>- No further responses
+    
+    Note over Server: IP blocked for enumeration
+```
+
+## 14. Network Adaptation and Performance Optimization
+
+### 14.1 Delay Parameter Negotiation via Enhanced Heartbeat
+
+```mermaid
+sequenceDiagram
+    participant Peer A
+    participant Peer B
+    
+    Note over Peer A,Peer B: Network conditions changing
+    
+    Peer A->>Peer B: HEARTBEAT (Type 0x06)
+    Note right of Peer A: - Current delay window: 4<br/>- Measured jitter: 150ms<br/>- Loss rate: 2%<br/>- Propose window: 6
+    
+    Peer B->>Peer A: HEARTBEAT (Type 0x06)
+    Note left of Peer B: - Current delay window: 4<br/>- Measured jitter: 200ms<br/>- Loss rate: 3%<br/>- Agree window: 6
+    
+    Note over Peer A,Peer B: Both agree on window size 6
+    Note over Peer A,Peer B: Apply new delay parameters
+    
+    Note over Peer A,Peer B: Continue monitoring performance
+    
+    Peer A->>Peer B: HEARTBEAT (Type 0x06)
+    Note right of Peer A: - Window 6 performance good<br/>- Jitter reduced: 100ms<br/>- Loss rate: 1%<br/>- Maintain current settings
+    
+    Note over Peer A,Peer B: Optimal delay parameters achieved
+```
+
+### 14.2 MTU Discovery and Dynamic Fragmentation
 
 ```mermaid
 sequenceDiagram
@@ -967,68 +860,3 @@ sequenceDiagram
     
     Note over Sender,Receiver: Adaptive fragmentation established
 ```
-
-### 16.2 Delay Parameter Negotiation
-
-```mermaid
-sequenceDiagram
-    participant Peer A
-    participant Peer B
-    
-    Note over Peer A,Peer B: Network conditions changing
-    
-    Peer A->>Peer B: HEARTBEAT (Type 0x06)
-    Note right of Peer A: - Current delay window: 4<br/>- Measured jitter: 150ms<br/>- Loss rate: 2%<br/>- Propose window: 6
-    
-    Peer B->>Peer A: HEARTBEAT (Type 0x06)
-    Note left of Peer B: - Current delay window: 4<br/>- Measured jitter: 200ms<br/>- Loss rate: 3%<br/>- Agree window: 6
-    
-    Note over Peer A,Peer B: Both agree on window size 6
-    Note over Peer A,Peer B: Apply new delay parameters
-    
-    Note over Peer A,Peer B: Continue monitoring performance
-    
-    Peer A->>Peer B: HEARTBEAT (Type 0x06)
-    Note right of Peer A: - Window 6 performance good<br/>- Jitter reduced: 100ms<br/>- Loss rate: 1%<br/>- Maintain current settings
-    
-    Note over Peer A,Peer B: Optimal delay parameters achieved
-```
-
-## Summary
-
-These comprehensive sequence diagrams illustrate the complete range of protocol operations from basic connection establishment through complex recovery scenarios, security attacks, and edge cases. The diagrams cover 16 major categories of protocol behavior:
-
-### **Core Protocol Operations:**
-1. **Connection Establishment** - Three-way handshakes, PSK discovery, and sequence negotiation using optimized 50-byte headers
-2. **Data Transmission** - Normal flow control, SACK-based loss recovery, and fragmentation for large messages
-3. **Port Hopping and Time Sync** - Coordinated port changes and precise time synchronization between peers
-4. **Connection Termination** - Graceful FIN-based shutdown and forceful RST-based termination
-
-### **Recovery and Error Handling:**
-5. **Recovery Scenarios** - Time resync, sequence repair, session rekeying, and connection termination on failure
-6. **Error Handling** - Authentication failures, protocol errors, and systematic recovery responses
-7. **Complete Recovery Escalation** - Full chain from time sync through connection termination, including failure scenarios
-
-### **Advanced Protocol Features:**
-8. **PSK Discovery Failures** - Timeout handling, enumeration attack detection, and no-common-key scenarios
-9. **Advanced Fragmentation** - Timeout retransmission, overlap attack detection, and fragment bomb protection
-10. **Flow Control Edge Cases** - Zero window probing and deadlock resolution mechanisms
-11. **Multi-Connection Management** - Port collision resolution and session ID conflict handling
-12. **Heartbeat and Keep-Alive** - Connection monitoring, timeout detection, and liveness verification
-
-### **Security and Attack Scenarios:**
-13. **Advanced Security** - Authentication failure cascades, replay attack detection, and automatic rekeying
-14. **Network Adaptation** - MTU discovery, dynamic fragmentation, and delay parameter negotiation
-
-### **Key Protocol Patterns:**
-- **Cryptographic validation** at each step using HMAC_SHA256_128 authentication for message integrity
-- **Graceful degradation** with systematic recovery escalation through CONTROL and MANAGEMENT sub-types
-- **Time-synchronized operations** for coordinated port hopping with precise timing requirements
-- **Error detection and recovery** with appropriate escalation through structured packet types and sub-types
-- **Security resilience** against enumeration, replay, overlap, and authentication attacks
-- **Resource management** including flow control, fragmentation, and collision avoidance
-- **Network adaptation** with dynamic parameter adjustment based on measured conditions
-- **Parallel connection support** with cryptographic separation and collision resolution
-
-The diagrams demonstrate both optimal operation paths and comprehensive error handling, showing how the protocol maintains security, reliability, and performance in diverse network environments and attack scenarios. All flows use the optimized packet format with consolidated sub-type architecture for maximum efficiency while providing extensive functionality through the systematic use of CONTROL, MANAGEMENT, and DISCOVERY packet types.
-
