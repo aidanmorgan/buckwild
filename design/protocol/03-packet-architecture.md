@@ -4,20 +4,19 @@ This document defines the complete packet format specifications for the protocol
 
 ## Overview
 
-The packet format provides the fundamental data structures used for all network communication between peers. The design has been optimized to reduce overhead while maintaining all necessary functionality and providing better extensibility.
+The packet format provides optimized data structures for network communication between peers. The design minimizes overhead while maintaining all necessary functionality and providing excellent extensibility.
 
-## Key Concepts
+## Key Design Principles
 
-- **Common Header**: A standardized 50-byte header present in all packets containing essential routing and authentication information
-- **Packet Types**: 11 base packet types that handle all protocol communication needs
-- **Sub-Types**: Extension mechanism for CONTROL, MANAGEMENT, and DISCOVERY packets that provides functionality consolidation
-- **Conditional Fields**: Header fields moved to packet payloads when not needed by all packet types
-- **HMAC Authentication**: 128-bit authentication field in every packet header ensuring message integrity and authenticity
+- **Adaptive Header Size**: Variable session ID, timestamp, and HMAC sizes based on deployment requirements
+- **Month-Based Timestamps**: Compressed timestamps using milliseconds since current month start
+- **Tiered Authentication**: Different HMAC levels for different packet types and intervals
+- **Deployment Flexibility**: Configurable for everything from IoT devices to enterprise infrastructure
 
-## Packet Type Definitions (Standardized)
+## Packet Type Definitions
 
 ```pseudocode
-// Optimized packet types with sub-types
+// Core packet types
 PACKET_TYPE_SYN = 0x01                  // Connection establishment
 PACKET_TYPE_SYN_ACK = 0x02              // Connection establishment response
 PACKET_TYPE_ACK = 0x03                  // Acknowledgment (includes WINDOW_UPDATE and SACK)
@@ -48,29 +47,61 @@ DISCOVERY_SUB_RESPONSE = 0x02           // PSK discovery response
 DISCOVERY_SUB_CONFIRM = 0x03            // PSK discovery confirmation
 ```
 
-## Optimized Common Header Format (All Packets)
+## Adaptive Header Format
+
+### Configuration Encoding
+
+The protocol uses version byte encoding to specify the adaptive configuration:
 
 ```pseudocode
-Optimized Common Header Structure (Big-Endian):
+Version Byte Encoding (8 bits):
+Bits 0-3: Protocol version (0x01)
+Bits 4-5: Session ID length
+  00 = 16-bit session ID (2 bytes)
+  01 = 32-bit session ID (4 bytes)
+  10 = 64-bit session ID (8 bytes)
+  11 = Reserved
+Bits 6-7: Timestamp configuration
+  00 = 16-bit timestamp (2 bytes, 1.09 minutes max)
+  01 = 24-bit timestamp (3 bytes, 4.66 hours max)
+  10 = 24-bit timestamp with 10ms precision (46.6 hours max)
+  11 = 32-bit timestamp (4 bytes, full month max)
+
+Examples:
+0x11 = v1 + 16-bit ID + 16-bit timestamp
+0x51 = v1 + 32-bit ID + 16-bit timestamp  
+0x91 = v1 + 64-bit ID + 16-bit timestamp
+0x71 = v1 + 32-bit ID + 24-bit timestamp (most common)
+0xF1 = v1 + 32-bit ID + 32-bit timestamp (long-lived)
+```
+
+### Common Header Structure
+
+```pseudocode
+Adaptive Common Header Structure (Big-Endian):
 +--------+--------+--------+--------+
 | Version| Type   |Sub-Type| Flags  |
 +--------+--------+--------+--------+
-|          Session ID (64-bit)      |
+|    Session ID (Variable Length)   |
+|  (2, 4, or 8 bytes based on      |
+|   version bits 4-5)               |
 +-----------------------------------+
 |       Sequence Number (32-bit)    |
 +-----------------------------------+
 |    Acknowledgment Number (32-bit) |
 +-----------------------------------+
-|      Timestamp (32-bit)          |
+|  Timestamp (Variable Length)      |
+|  (2, 3, or 4 bytes based on      |
+|   version bits 6-7)               |
 +-----------------------------------+
-|       Payload Length (16-bit)    |
+|    Payload Length (16-bit)       |
 +-----------------------------------+
-|           HMAC (128-bit)         |
-|                                 |
+|   HMAC (Variable: 4-16 bytes)   |
+|  Based on packet type and policy  |
 +-----------------------------------+
 
 Field Definitions:
-- Version (8-bit): Protocol version (0x02 for optimized header)
+- Version (8-bit): Protocol version and configuration encoding
 - Type (8-bit): Packet type (see packet types above)
 - Sub-Type (8-bit): Packet sub-type for CONTROL, MANAGEMENT, and DISCOVERY packets (0x00 for others)
 - Flags (8-bit): Bit flags for packet options
@@ -82,32 +113,81 @@ Field Definitions:
   - Bit 5: URG flag (urgent data)
   - Bit 6: SACK flag (selective acknowledgment present in payload)
   - Bit 7: Fragment flag (fragmentation info present in payload)
-- Session ID (64-bit): Unique session identifier (big-endian)
+- Session ID (Variable): Unique session identifier (big-endian)
 - Sequence Number (32-bit): Packet sequence number (big-endian)
 - Acknowledgment Number (32-bit): Next expected sequence (big-endian, 0 if not applicable)
-- Timestamp (32-bit): Packet timestamp in milliseconds since UTC midnight of current day (big-endian)
+- Timestamp (Variable): For base port hopping (connection establishment): milliseconds since UTC midnight of current day, divided by 500ms for bucket calculation. For session packets: milliseconds since UTC midnight of current month (big-endian)
 - Payload Length (16-bit): Length of payload data in bytes (big-endian)
-- HMAC (128-bit): Authentication hash using session key (big-endian)
-
-Total Optimized Header Size: 50 bytes (14 bytes smaller than original)
+- HMAC (Variable): Authentication hash using session key (big-endian)
 ```
 
-## Conditional Fields (Moved to Packet Payloads)
+### Header Size Examples
 
-### Flow Control Fields (when needed)
+```
+Configuration Examples:
+Ultra-compact:  23 bytes (16-bit ID + 16-bit TS + 32-bit HMAC)
+Compact:        24 bytes (16-bit ID + 24-bit TS + 32-bit HMAC)
+Standard:       26 bytes (32-bit ID + 24-bit TS + 32-bit HMAC) 
+Secure:         30 bytes (32-bit ID + 24-bit TS + 64-bit HMAC)
+Long-lived:     45 bytes (64-bit ID + 32-bit TS + 128-bit HMAC)
+```
+
+## HMAC Policy
+
+### Packet Classification
+
+Packets are classified into security levels that determine HMAC requirements:
+
 ```pseudocode
-Flow Control Header (4 bytes):
+PACKET_CLASS_CRITICAL:   // Always full HMAC (128-bit)
+- SYN, SYN_ACK, FIN packets
+- DISCOVERY packets  
+- REKEY operations
+
+PACKET_CLASS_CONTROL:    // Strong HMAC minimum (64-bit)
+- ERROR, RST, HEARTBEAT packets
+- TIME_SYNC, RECOVERY operations
+- REPAIR operations
+
+PACKET_CLASS_DATA:       // Adaptive HMAC (32-bit default)
+- DATA packets between full HMAC intervals
+- ACK packets for data
+```
+
+### Adaptive HMAC Rules
+
+```pseudocode
+HMAC Selection Algorithm:
+1. Critical packets: Always use HMAC_FULL (128-bit)
+2. Control packets: Use HMAC_STRONG (64-bit) minimum
+3. Data packets: Use HMAC_LIGHT (32-bit) with periodic full verification
+
+Periodic Full HMAC Triggers:
+- Every 100 data packets
+- Every 5 seconds of activity
+- After any HMAC verification failure
+- During month boundary transitions
+```
+
+## Conditional Fields
+
+### Flow Control Fields (4 bytes when needed)
+
+```pseudocode
+Flow Control Header:
 +-----------------------------------+
 |       Window Size (16-bit)       |
 +-----------------------------------+
 |        Reserved (16-bit)         |
 +-----------------------------------+
-```
-Used in: ACK, DATA, HEARTBEAT packets
 
-### Fragmentation Fields (when Fragment flag set)
+Used in: ACK, DATA, HEARTBEAT packets
+```
+
+### Fragmentation Fields (8 bytes when Fragment flag set)
+
 ```pseudocode
-Fragmentation Header (8 bytes):
+Fragmentation Header:
 +-----------------------------------+
 |  Fragment ID     |Fragment Index |
 |   (16-bit)       |   (16-bit)    |
@@ -115,12 +195,20 @@ Fragmentation Header (8 bytes):
 |  Total Frags     |   Reserved    |
 |   (16-bit)       |   (16-bit)    |
 +-------------------+---------------+
-```
-Used in: DATA packets when fragmented
 
-### Selective ACK Fields (when SACK flag set)
+Field Definitions:
+- Fragment ID (16-bit): Unique identifier for this fragmented message
+- Fragment Index (16-bit): Zero-based index of this fragment  
+- Total Frags (16-bit): Total number of fragments in message
+- Reserved (16-bit): Must be 0x0000
+
+Used in: DATA packets when fragmented
+```
+
+### Selective ACK Fields (Variable length when SACK flag set)
+
 ```pseudocode
-SACK Header (Variable length):
+SACK Header:
 +-----------------------------------+
 |    SACK Block Count (8-bit)      |
 +-----------------------------------+
@@ -131,29 +219,118 @@ SACK Header (Variable length):
 |   (8 bytes per range)            |
 |   Start Seq (32) + End Seq (32)  |
 +-----------------------------------+
-```
-Used in: ACK packets when selective acknowledgment needed
 
-## Packet Type Specifications
+Used in: ACK packets when selective acknowledgment needed
+```
+
+## Timestamp Management
+
+### Month-Based Epoch
+
+The protocol uses two timestamp epochs: milliseconds since UTC midnight of the current day for base port hopping (divided into 500ms buckets for connection establishment), and milliseconds since UTC midnight of the current month for session packets. This provides:
+
+- **32-bit coverage**: Handles longest month (31 days = 2.68 billion ms) with 1.6 billion ms buffer
+- **24-bit practical**: Covers 4.66 hours, sufficient for most connections
+- **16-bit ultra-compact**: Covers 1.09 minutes for very short connections
+
+### Temporal Boundary Handling
+
+```pseudocode
+Daily Boundary Transition (Base Port Hopping):
+1. At UTC midnight: Daily key rotates automatically
+2. Base port sequences reset with new daily key using 500ms buckets
+3. Connection establishment uses new daily epoch (500ms buckets since new midnight)
+4. Time bucket = milliseconds_since_midnight_utc // 500
+
+Month Boundary Transition (Session Packets):
+1. One hour before month end: Begin transition preparation
+2. Force full HMAC for all packets during transition window
+3. Accept timestamps from both old and new month epochs
+4. Log transition and notify active sessions
+5. Reset timestamp epoch to new month start
+```
+
+## Session ID Management
+
+### Adaptive Session ID Length
+
+```pseudocode
+Session ID Selection:
+- 16-bit (65K sessions): IoT/embedded deployments
+- 32-bit (4B sessions): Standard enterprise deployments  
+- 64-bit (unlimited): Large-scale cloud deployments
+
+Collision Handling:
+- 16-bit: Use reuse queue for closed session IDs
+- 32-bit: Random prefix + counter to reduce collisions
+- 64-bit: Pure cryptographically random generation
+```
+
+## Deployment Configurations
+
+### Standard Configurations
+
+```pseudocode
+// IoT/Embedded (ultra-compact)
+iot_config = {
+    session_id: SESSION_ID_16BIT,
+    timestamp: TIMESTAMP_16BIT,     // 1.09 minutes max
+    hmac_default: HMAC_LIGHT,
+    header_size: 23 bytes         
+}
+
+// Standard Enterprise  
+standard_config = {
+    session_id: SESSION_ID_32BIT,
+    timestamp: TIMESTAMP_24BIT,     // 4.66 hours max
+    hmac_default: HMAC_LIGHT,
+    header_size: 26 bytes          
+}
+
+// High Security
+secure_config = {
+    session_id: SESSION_ID_32BIT,
+    timestamp: TIMESTAMP_24BIT,     // 4.66 hours max
+    hmac_default: HMAC_STRONG,
+    header_size: 30 bytes          
+}
+
+// Infrastructure (long-lived)
+infrastructure_config = {
+    session_id: SESSION_ID_64BIT,
+    timestamp: TIMESTAMP_32BIT,     // Full month max
+    hmac_default: HMAC_FULL,
+    header_size: 45 bytes          
+}
+```
+
+## Packet Specifications
+
+All packet types use the adaptive common header format with packet-specific payloads. The header size varies based on configuration, while payload structures remain consistent across deployments.
 
 ### SYN Packet (Type 0x01)
 
-**Purpose**: Initiates a new connection between peers and establishes the initial protocol parameters.
-
-**Why it exists**: The SYN packet serves as the first step in the three-way handshake, allowing peers to:
-- Establish ephemeral Diffie-Hellman key exchange for forward secrecy
-- Exchange supported protocol features and capabilities
-- Establish initial flow control windows
-- Synchronize time offsets for port hopping coordination
-- Derive initial sequence numbers and port offsets from shared DH secret using PBKDF2
-
-**When used**: Sent by the client to initiate a new connection to a server.
+**When is it used**: Sent by the client to initiate a new connection to a server. Contains the client's ECDH public key and proposed configuration parameters.
 
 ```pseudocode
 SYN Packet Structure (Big-Endian):
++--------+--------+--------+--------+
+| Version| 0x01   | 0x00   | Flags  |
++--------+--------+--------+--------+
+|    Session ID (Variable Length)   |
+|      (Proposed by client)         |
 +-----------------------------------+
-|      Optimized Common Header      |
-|           (50 bytes)             |
+|       Sequence Number (32-bit)    |
++-----------------------------------+
+|    Acknowledgment Number (32-bit) |
+|           (Set to 0)              |
++-----------------------------------+
+|  Timestamp (Variable Length)      |
++-----------------------------------+
+|    Payload Length (16-bit)       |
++-----------------------------------+
+|      HMAC (128-bit - Full)       |
+|                                 |
 +-----------------------------------+
 |    Client ECDH Public Key        |
 |         (P-256 Point)            |
@@ -178,39 +355,45 @@ SYN Packet Structure (Big-Endian):
 |       Reserved (16-bit)          |
 +-----------------------------------+
 
-Field Definitions:
-- Optimized Common Header (50 bytes): Standard header with SYN flag set
-- Client ECDH Public Key (64 bytes): P-256 public key for key exchange (64 bytes)
-- PSK Authentication (16 bytes): HMAC of public key with PSK (16 bytes)
-- Key Exchange ID (16-bit): Unique identifier for this key exchange (2 bytes)
-- Initial Congestion Window (16-bit): Initial congestion window size (2 bytes)
-- Initial Receive Window (16-bit): Initial receive window size (2 bytes)
-- Time Offset (32-bit): Client's time offset from epoch (4 bytes)
-- Supported Features (16-bit): Bitmap of supported features (2 bytes)
-- Reserved (16-bit): Always 0x0000 (2 bytes)
+Field Details:
+- Flags: SYN flag (bit 1) set
+- Session ID: Proposed session ID for the connection
+- Sequence Number: Initial sequence number from client
+- Client ECDH Public Key: P-256 public key for key exchange (64 bytes)
+- PSK Authentication: HMAC of public key with PSK (16 bytes)
+- Key Exchange ID: Unique identifier for this key exchange (16-bit)
+- Initial Congestion Window: Client's initial congestion window size
+- Initial Receive Window: Client's initial receive window size
+- Time Offset: Client's time offset for synchronization
+- Supported Features: Bitmap of client capabilities
+- Reserved: Must be 0x0000
 
-Total SYN Packet Size: 50 + 108 = 158 bytes
+Total Size: Adaptive header + 108 bytes payload
 ```
 
 ### SYN-ACK Packet (Type 0x02)
 
-**Purpose**: Responds to a SYN packet, acknowledging the connection request and providing server-side parameters.
-
-**Why it exists**: The SYN-ACK packet completes the server side of the three-way handshake by:
-- Acknowledging the client's SYN and ECDH public key
-- Providing the server's ephemeral ECDH public key
-- Completing the Diffie-Hellman key exchange for session key derivation
-- Negotiating final protocol features and capabilities
-- Establishing mutual time synchronization and flow control windows
-- Enabling both peers to derive identical sequence numbers and port offsets from shared DH secret
-
-**When used**: Sent by the server in response to a valid SYN packet from a client.
+**When is it used**: Sent by the server in response to a valid SYN packet from a client. Completes the server side of the three-way handshake.
 
 ```pseudocode
 SYN-ACK Packet Structure (Big-Endian):
++--------+--------+--------+--------+
+| Version| 0x02   | 0x00   | Flags  |
++--------+--------+--------+--------+
+|    Session ID (Variable Length)   |
+|    (Confirmed by server)          |
 +-----------------------------------+
-|      Optimized Common Header      |
-|           (50 bytes)             |
+|       Sequence Number (32-bit)    |
++-----------------------------------+
+|    Acknowledgment Number (32-bit) |
+|    (Client seq + 1)               |
++-----------------------------------+
+|  Timestamp (Variable Length)      |
++-----------------------------------+
+|    Payload Length (16-bit)       |
++-----------------------------------+
+|      HMAC (128-bit - Full)       |
+|                                 |
 +-----------------------------------+
 |    Server ECDH Public Key        |
 |         (P-256 Point)            |
@@ -236,37 +419,38 @@ SYN-ACK Packet Structure (Big-Endian):
 |       Reserved (16-bit)          |
 +-----------------------------------+
 
-Field Definitions:
-- Optimized Common Header (50 bytes): Standard header with SYN and ACK flags set
-- Server ECDH Public Key (64 bytes): P-256 public key for key exchange (64 bytes)
-- Shared Secret Verification Hash (32 bytes): SHA256 hash of computed shared secret (32 bytes)
-- Key Exchange ID Echo (16-bit): Echo of client's key exchange ID (2 bytes)
-- Initial Congestion Window (16-bit): Initial congestion window size (2 bytes)
-- Initial Receive Window (16-bit): Initial receive window size (2 bytes)
-- Time Offset (32-bit): Server's time offset from epoch (4 bytes)
-- Negotiated Features (16-bit): Final feature bitmap (2 bytes)
-- Reserved (16-bit): Always 0x0000 (2 bytes)
+Field Details:
+- Flags: SYN and ACK flags (bits 1,4) set
+- Session ID: Confirmed session ID for the connection
+- Acknowledgment Number: Client's sequence number + 1
+- Server ECDH Public Key: Server's P-256 public key (64 bytes)
+- Shared Secret Verification: SHA256 hash of computed shared secret (32 bytes)
+- Key Exchange ID Echo: Echo of client's key exchange ID
+- Negotiated Features: Final agreed capabilities
 
-Total SYN-ACK Packet Size: 50 + 124 = 174 bytes
+Total Size: Adaptive header + 124 bytes payload
 ```
 
 ### ACK Packet (Type 0x03)
 
-**Purpose**: Acknowledges received data, provides flow control updates, and handles selective acknowledgment for efficient loss recovery.
-
-**Why it exists**: The ACK packet is essential for reliable data delivery and network efficiency:
-- Confirms successful receipt of data packets to enable sender buffer cleanup
-- Provides flow control by advertising current receive window size
-- Implements selective acknowledgment (SACK) to efficiently recover from packet loss
-- Enables precise congestion control feedback for optimal throughput
-
-**When used**: Sent in response to DATA packets, for flow control updates, or to acknowledge connection establishment.
+**When is it used**: Sent to acknowledge received data, provide flow control updates, and handle selective acknowledgment for efficient loss recovery.
 
 ```pseudocode
-Optimized ACK Packet Structure (Big-Endian):
+ACK Packet Structure (Big-Endian):
++--------+--------+--------+--------+
+| Version| 0x03   | 0x00   | Flags  |
++--------+--------+--------+--------+
+|    Session ID (Variable Length)   |
 +-----------------------------------+
-|      Optimized Common Header      |
-|           (50 bytes)             |
+|       Sequence Number (32-bit)    |
++-----------------------------------+
+|    Acknowledgment Number (32-bit) |
++-----------------------------------+
+|  Timestamp (Variable Length)      |
++-----------------------------------+
+|    Payload Length (16-bit)       |
++-----------------------------------+
+|   HMAC (Variable: 32-128 bits)   |
 +-----------------------------------+
 |       Flow Control Header        |
 |           (4 bytes)              |
@@ -276,42 +460,53 @@ Optimized ACK Packet Structure (Big-Endian):
 |    (Present when SACK flag set)  |
 +-----------------------------------+
 
-Field Definitions:
-- Optimized Common Header (50 bytes): Standard header with ACK flag set
-- Flow Control Header (4 bytes): Always present in ACK packets
-  - Window Size (16-bit): Current receive window size
-  - Reserved (16-bit): Always 0x0000
-- SACK Header (Variable): Present when SACK flag (bit 6) is set
-  - SACK Block Count (8-bit): Number of additional SACK ranges (0-15)
-  - Primary SACK Bitmap (32-bit): Basic SACK information for recent packets
-  - Additional SACK Ranges (8 bytes each): Extended ranges for complex loss patterns
-    - Start Sequence (32-bit) + End Sequence (32-bit) per range
+Flow Control Header (4 bytes):
++-----------------------------------+
+|       Window Size (16-bit)       |
++-----------------------------------+
+|        Reserved (16-bit)         |
++-----------------------------------+
 
-Usage:
-- Basic ACK: Common header + Flow control header (54 bytes)
-- ACK with SACK: Basic ACK + SACK header (59+ bytes depending on ranges)
-- Window Update: Flow control header provides window advertisement
+SACK Header (when SACK flag set):
++-----------------------------------+
+|    SACK Block Count (8-bit)      |
++-----------------------------------+
+|      Primary SACK Bitmap         |
+|        (32-bit)                  |
++-----------------------------------+
+|   Additional SACK Ranges         |
+|   (8 bytes per range)            |
+|   Start Seq (32) + End Seq (32)  |
++-----------------------------------+
 
-Total ACK Packet Size: 54 bytes (basic) + 5 + 8*N bytes (SACK with N ranges)
+Field Details:
+- Flags: ACK flag (bit 4) set, optionally SACK flag (bit 6)
+- Flow Control Header: Always present, advertises receive window
+- SACK Header: Present when selective acknowledgment needed
+
+Total Size: Adaptive header + 4 bytes (basic) + variable SACK data
 ```
 
 ### DATA Packet (Type 0x04)
 
-**Purpose**: Carries application data payload and handles fragmentation for large messages that exceed MTU limits.
-
-**Why it exists**: The DATA packet is the primary vehicle for application data transmission:
-- Transports application layer data reliably between peers
-- Integrates fragmentation capabilities to handle large payloads that exceed network MTU
-- Provides flow control information to prevent receiver buffer overflow
-- Maintains sequence ordering for reliable data delivery
-
-**When used**: Sent whenever application data needs to be transmitted, including both regular and fragmented data.
+**When is it used**: Carries application data payload and handles fragmentation for large messages that exceed MTU limits.
 
 ```pseudocode
-Optimized DATA Packet Structure (Big-Endian):
+DATA Packet Structure (Big-Endian):
++--------+--------+--------+--------+
+| Version| 0x04   | 0x00   | Flags  |
++--------+--------+--------+--------+
+|    Session ID (Variable Length)   |
 +-----------------------------------+
-|      Optimized Common Header      |
-|           (50 bytes)             |
+|       Sequence Number (32-bit)    |
++-----------------------------------+
+|    Acknowledgment Number (32-bit) |
++-----------------------------------+  
+|  Timestamp (Variable Length)      |  
++-----------------------------------+
+|    Payload Length (16-bit)       |
++-----------------------------------+
+|   HMAC (Variable: 32-128 bits)   |
 +-----------------------------------+
 |       Flow Control Header        |
 |           (4 bytes)              |
@@ -320,76 +515,81 @@ Optimized DATA Packet Structure (Big-Endian):
 |           (8 bytes)              |
 |   (Present when Fragment flag set)|
 +-----------------------------------+
-|        Payload Data              |
+|        Application Data          |
 |        (Variable Length)         |
 +-----------------------------------+
 
-Field Definitions:
-- Optimized Common Header (50 bytes): Standard header with PSH flag set
-- Flow Control Header (4 bytes): Always present in DATA packets
-  - Window Size (16-bit): Current receive window advertisement
-  - Reserved (16-bit): Always 0x0000
-- Fragmentation Header (8 bytes): Present when Fragment flag (bit 7) is set
-  - Fragment ID (16-bit): Unique identifier for fragmented messages
-  - Fragment Index (16-bit): Position of this fragment (0-based)
-  - Total Frags (16-bit): Total fragments in message
-  - Reserved (16-bit): Always 0x0000
-- Payload Data (Variable Length): Application data or fragment data
+Fragmentation Header (when Fragment flag set):
++-----------------------------------+
+|  Fragment ID     |Fragment Index |
+|   (16-bit)       |   (16-bit)    |
++-------------------+---------------+
+|  Total Frags     |   Reserved    |
+|   (16-bit)       |   (16-bit)    |
++-------------------+---------------+
 
-Usage:
-- Regular Data: Common header + Flow control header + Payload (54 + payload_length bytes)
-- Fragmented Data: All headers + Payload (62 + payload_length bytes)
+Field Details:
+- Flags: PSH flag (bit 3) set, optionally Fragment flag (bit 7)
+- Flow Control Header: Always present
+- Fragmentation Header: Present when message fragmented
+- Application Data: User payload or fragment data
 
-Total DATA Packet Size: 54 + payload_length bytes (regular) or 62 + payload_length bytes (fragmented)
+Total Size: Adaptive header + 4 bytes + optional 8 bytes + payload
 ```
 
 ### FIN Packet (Type 0x05)
 
-**Purpose**: Initiates graceful connection termination and signals that no more data will be sent.
-
-**Why it exists**: The FIN packet enables orderly connection shutdown:
-- Signals to the peer that the sender has finished sending data
-- Provides the final sequence number to ensure all data has been received
-- Initiates the graceful shutdown handshake process
-- Allows proper cleanup of connection resources
-- Distinguishes between graceful shutdown and error conditions
-
-**When used**: Sent when an application or protocol layer wants to close a connection gracefully.
+**When is it used**: Initiates graceful connection termination and signals that no more data will be sent.
 
 ```pseudocode
 FIN Packet Structure (Big-Endian):
++--------+--------+--------+--------+
+| Version| 0x05   | 0x00   | Flags  |
++--------+--------+--------+--------+
+|    Session ID (Variable Length)   |
 +-----------------------------------+
-|      Optimized Common Header      |
-|           (50 bytes)             |
+|       Sequence Number (32-bit)    |
++-----------------------------------+
+|    Acknowledgment Number (32-bit) |
++-----------------------------------+
+|  Timestamp (Variable Length)      |
++-----------------------------------+
+|    Payload Length (16-bit)       |
++-----------------------------------+
+|      HMAC (128-bit - Full)       |
+|                                 |
 +-----------------------------------+
 |    Final Sequence Number         |
 +-----------------------------------+
 
-Field Definitions:
-- Optimized Common Header (50 bytes): Standard header with FIN flag set
-- Final Sequence Number (32-bit): Final sequence number
+Field Details:
+- Flags: FIN flag (bit 0) set
+- Final Sequence Number: Last sequence number to be sent
+- HMAC: Always full 128-bit for critical packets
 
-Total FIN Packet Size: 50 + 4 = 54 bytes
+Total Size: Adaptive header + 4 bytes payload
 ```
 
 ### HEARTBEAT Packet (Type 0x06)
 
-**Purpose**: Maintains connection liveliness, synchronizes time between peers, and provides network performance feedback.
-
-**Why it exists**: The HEARTBEAT packet serves multiple critical maintenance functions:
-- Detects if the connection is still alive and the peer is responsive
-- Provides time synchronization information to maintain port hopping coordination
-- Measures network latency and jitter for adaptive delay tuning
-- Advertises flow control window status during idle periods
-- Carries delay negotiation data for network performance optimization
-
-**When used**: Sent periodically (every 30 seconds) when no other data is being transmitted to maintain connection health.
+**When is it used**: Maintains connection liveliness, synchronizes time between peers, and provides network performance feedback. Sent periodically (every 30 seconds) when no other data is being transmitted.
 
 ```pseudocode
-Optimized HEARTBEAT Packet Structure (Big-Endian):
+HEARTBEAT Packet Structure (Big-Endian):
++--------+--------+--------+--------+
+| Version| 0x06   | 0x00   | Flags  |
++--------+--------+--------+--------+
+|    Session ID (Variable Length)   |
 +-----------------------------------+
-|      Optimized Common Header      |
-|           (50 bytes)             |
+|       Sequence Number (32-bit)    |
++-----------------------------------+
+|    Acknowledgment Number (32-bit) |
++-----------------------------------+
+|  Timestamp (Variable Length)      |
++-----------------------------------+
+|    Payload Length (16-bit)       |
++-----------------------------------+
+|   HMAC (Variable: 64-128 bits)   |
 +-----------------------------------+
 |       Flow Control Header        |
 |           (4 bytes)              |
@@ -404,45 +604,37 @@ Optimized HEARTBEAT Packet Structure (Big-Endian):
 |                                 |
 +-----------------------------------+
 
-Field Definitions:
-- Optimized Common Header (50 bytes): Standard header with ACK flag set
-- Flow Control Header (4 bytes): Window advertisement
-  - Window Size (16-bit): Current receive window size
-  - Reserved (16-bit): Always 0x0000
-- Current Time (32-bit): Sender's current time in milliseconds since UTC midnight
-- Time Drift (16-bit): Calculated time drift
-- Sync State (8-bit): Current synchronization state
-- Reserved (8-bit): Always 0x00
-- Delay Negotiation Data (64-bit): Compact delay adaptation parameters
-  - Bits 0-7: Current delay window (1-16 time windows)
-  - Bits 8-19: Network jitter (0-4095ms)
-  - Bits 20-29: Packet loss rate (0-1023 per-mille)
-  - Bits 30-37: Measurement sample count (0-255)
-  - Bits 38-47: Negotiation sequence (rolling counter)
-  - Bit 48: Adaptation enabled flag
-  - Bits 49-63: Reserved for future use
+Field Details:
+- Flags: ACK flag (bit 4) set
+- Flow Control Header: Window advertisement
+- Current Time: Sender's current timestamp
+- Time Drift: Calculated time drift value
+- Sync State: Current synchronization state
+- Delay Negotiation Data: Network performance parameters
 
-Optimized HEARTBEAT Packet Size: 50 + 4 + 16 = 70 bytes (10 bytes smaller than original)
+Total Size: Adaptive header + 20 bytes payload
 ```
 
 ### ERROR Packet (Type 0x09)
 
-**Purpose**: Reports protocol errors, authentication failures, and other exceptional conditions to the peer.
-
-**Why it exists**: The ERROR packet enables robust error handling and debugging:
-- Provides structured error reporting with specific error codes
-- Enables the peer to understand why operations failed
-- Supports debugging and troubleshooting of protocol issues
-- Allows graceful error recovery when possible
-- Includes human-readable error messages for diagnostic purposes
-
-**When used**: Sent when the protocol encounters errors that the peer needs to be informed about, such as authentication failures, invalid packets, or state machine violations.
+**When is it used**: Reports protocol errors, authentication failures, and other exceptional conditions to the peer. Sent when the protocol encounters errors that the peer needs to be informed about.
 
 ```pseudocode
 ERROR Packet Structure (Big-Endian):
++--------+--------+--------+--------+
+| Version| 0x09   | 0x00   | Flags  |
++--------+--------+--------+--------+
+|    Session ID (Variable Length)   |
 +-----------------------------------+
-|      Optimized Common Header      |
-|           (50 bytes)             |
+|       Sequence Number (32-bit)    |
++-----------------------------------+
+|    Acknowledgment Number (32-bit) |
++-----------------------------------+
+|  Timestamp (Variable Length)      |
++-----------------------------------+
+|    Payload Length (16-bit)       |
++-----------------------------------+
+|   HMAC (Variable: 64-128 bits)   |
 +-----------------------------------+
 | Error Code|    Error Details     |
 |  (8-bit) |      (24-bit)        |
@@ -450,65 +642,70 @@ ERROR Packet Structure (Big-Endian):
 |        Error Message              |
 |        (Variable Length)          |
 |                                 |
-|                                 |
 +-----------------------------------+
 
-Field Definitions:
-- Optimized Common Header (50 bytes): Standard header with RST flag set
-- Error Code (8-bit): Specific error code
-- Error Details (24-bit): Additional error information
-- Error Message (Variable Length): Human-readable error message
+Field Details:
+- Flags: RST flag (bit 2) may be set for critical errors
+- Error Code: Specific error code from definitions
+- Error Details: Additional error context information
+- Error Message: Human-readable error description
 
-Total ERROR Packet Size: 50 + 4 + error_message_length bytes
+Total Size: Adaptive header + 4 bytes + message length
 ```
 
 ### RST Packet (Type 0x0B)
 
-**Purpose**: Immediately terminates a connection and rejects further communication attempts.
-
-**Why it exists**: The RST packet provides forceful connection termination for error conditions:
-- Enables immediate connection shutdown when errors prevent normal operation
-- Rejects connection attempts to invalid or unauthorized sessions
-- Provides a clear signal that the connection cannot or should not continue
-- Distinguishes between graceful shutdown (FIN) and forceful termination (RST)
-- Includes a reason code to help diagnose why the connection was reset
-
-**When used**: Sent when connections must be immediately terminated due to errors, security violations, or invalid state transitions.
+**When is it used**: Immediately terminates a connection and rejects further communication attempts. Sent when connections must be immediately terminated due to errors, security violations, or invalid state transitions.
 
 ```pseudocode
 RST Packet Structure (Big-Endian):
++--------+--------+--------+--------+
+| Version| 0x0B   | 0x00   | Flags  |
++--------+--------+--------+--------+
+|    Session ID (Variable Length)   |
 +-----------------------------------+
-|      Optimized Common Header      |
-|           (50 bytes)             |
+|       Sequence Number (32-bit)    |
++-----------------------------------+
+|    Acknowledgment Number (32-bit) |
++-----------------------------------+
+|  Timestamp (Variable Length)      |
++-----------------------------------+
+|    Payload Length (16-bit)       |
++-----------------------------------+
+|   HMAC (Variable: 64-128 bits)   |
 +-----------------------------------+
 | Reset Reason|      Reserved      |
 |   (8-bit)   |     (24-bit)      |
 +-----------------------------------+
 
-Field Definitions:
-- Optimized Common Header (50 bytes): Standard header with RST flag set
-- Reset Reason (8-bit): Reason for reset
-- Reserved (24-bit): Always 0x000000
+Field Details:
+- Flags: RST flag (bit 2) set
+- Reset Reason: Reason code for connection reset
+- Reserved: Must be 0x000000
 
-Total RST Packet Size: 50 + 4 = 54 bytes
+Total Size: Adaptive header + 4 bytes payload
 ```
 
 ### CONTROL Packet (Type 0x0C)
 
-**Purpose**: Handles various control operations including time synchronization and session recovery.
-
-**Why it exists**: The CONTROL packet consolidates multiple control functions into a single packet type for efficiency:
-- Provides time synchronization for coordinated port hopping between peers
-- Enables session recovery with detailed state information
-- Handles sequence number negotiation for secure connection establishment
-
-**When used**: Sent for time synchronization, session recovery operations, and sequence negotiations.
+**When is it used**: Handles various control operations including time synchronization and session recovery. Sent for time synchronization, session recovery operations, and sequence negotiations.
 
 ```pseudocode
 CONTROL Packet Structure (Big-Endian):
++--------+--------+--------+--------+
+| Version| 0x0C   |Sub-Type| Flags  |
++--------+--------+--------+--------+
+|    Session ID (Variable Length)   |
 +-----------------------------------+
-|      Optimized Common Header      |
-|           (50 bytes)             |
+|       Sequence Number (32-bit)    |
++-----------------------------------+
+|    Acknowledgment Number (32-bit) |
++-----------------------------------+
+|  Timestamp (Variable Length)      |
++-----------------------------------+
+|    Payload Length (16-bit)       |
++-----------------------------------+
+|   HMAC (Variable: 64-128 bits)   |
 +-----------------------------------+
 |        Control Payload           |
 |        (Variable Length)         |
@@ -525,7 +722,6 @@ TIME_SYNC_REQUEST (Sub-Type 0x01):
 +-----------------------------------+
 |        Reserved (64-bit)         |
 +-----------------------------------+
-Total: 50 + 16 = 66 bytes
 
 TIME_SYNC_RESPONSE (Sub-Type 0x02):
 +-----------------------------------+
@@ -537,7 +733,6 @@ TIME_SYNC_RESPONSE (Sub-Type 0x02):
 +-----------------------------------+
 |        Reserved (32-bit)         |
 +-----------------------------------+
-Total: 50 + 16 = 66 bytes
 
 RECOVERY (Sub-Type 0x03):
 +-----------------------------------+
@@ -550,27 +745,30 @@ RECOVERY (Sub-Type 0x03):
 | Recovery Reason   |   Reserved   |
 |     (8-bit)      |   (24-bit)   |
 +-------------------+---------------+
-Total: 50 + 16 = 66 bytes
+
+Total Size: Adaptive header + 16 bytes payload (varies by sub-type)
 ```
 
 ### MANAGEMENT Packet (Type 0x0D)
 
-**Purpose**: Handles session management operations including key rotation and sequence repair.
-
-**Why it exists**: The MANAGEMENT packet provides essential session maintenance capabilities:
-- Enables secure session key rotation to maintain forward secrecy
-- Provides sequence number repair mechanisms for connection recovery
-- Supports session rekeying with cryptographic key exchange
-- Consolidates management operations into a unified packet type for efficiency
-- Maintains session security through periodic cryptographic updates
-
-**When used**: Sent for session key rotation, sequence repair operations, and other session management functions.
+**When is it used**: Handles session management operations including key rotation and sequence repair. Sent for session key rotation, sequence repair operations, and other session management functions.
 
 ```pseudocode
 MANAGEMENT Packet Structure (Big-Endian):
++--------+--------+--------+--------+
+| Version| 0x0D   |Sub-Type| Flags  |
++--------+--------+--------+--------+
+|    Session ID (Variable Length)   |
 +-----------------------------------+
-|      Optimized Common Header      |
-|           (50 bytes)             |
+|       Sequence Number (32-bit)    |
++-----------------------------------+
+|    Acknowledgment Number (32-bit) |
++-----------------------------------+
+|  Timestamp (Variable Length)      |
++-----------------------------------+
+|    Payload Length (16-bit)       |
++-----------------------------------+
+|   HMAC (Variable: 64-128 bits)   |
 +-----------------------------------+
 |      Management Payload          |
 |        (Variable Length)         |
@@ -590,7 +788,6 @@ REKEY_REQUEST (Sub-Type 0x01):
 +-----------------------------------+
 |        Reserved (64-bit)         |
 +-----------------------------------+
-Total: 50 + 44 = 94 bytes
 
 REKEY_RESPONSE (Sub-Type 0x02):
 +-----------------------------------+
@@ -604,7 +801,6 @@ REKEY_RESPONSE (Sub-Type 0x02):
 |    Confirmation (128-bit)        |
 |                                 |
 +-----------------------------------+
-Total: 50 + 52 = 102 bytes
 
 REPAIR_REQUEST (Sub-Type 0x03):
 +-----------------------------------+
@@ -616,7 +812,6 @@ REPAIR_REQUEST (Sub-Type 0x03):
 +-----------------------------------+
 |        Reserved (64-bit)         |
 +-----------------------------------+
-Total: 50 + 16 = 66 bytes
 
 REPAIR_RESPONSE (Sub-Type 0x04):
 +-----------------------------------+
@@ -628,28 +823,31 @@ REPAIR_RESPONSE (Sub-Type 0x04):
 +-----------------------------------+
 |    Confirmation (64-bit)         |
 +-----------------------------------+
-Total: 50 + 16 = 66 bytes
+
+Total Size: Adaptive header + 16-52 bytes payload (varies by sub-type)
 ```
 
 ### DISCOVERY Packet (Type 0x0E)
 
-**Purpose**: Handles pre-shared key (PSK) discovery and selection for secure connection establishment.
-
-**Why it exists**: The DISCOVERY packet enables privacy-preserving PSK discovery using hash-based set intersection:
-- Uses Bloom filters and blinded fingerprints to find common PSKs without revealing non-shared keys
-- Implements privacy-preserving set intersection to protect PSK fingerprint collections
-- Prevents PSK enumeration attacks through cryptographic blinding and hash-based representations
-- Supports environments where both peers maintain large collections of PSK fingerprints
-- Enables efficient discovery through probabilistic data structures (Bloom filters)
-- Provides strong privacy guarantees - only intersection results are revealed, not full sets
-
-**When used**: Sent during connection establishment when PSK discovery is required to identify the correct shared key.
+**When is it used**: Handles pre-shared key (PSK) discovery and selection for secure connection establishment. Sent during connection establishment when PSK discovery is required to identify the correct shared key.
 
 ```pseudocode
 DISCOVERY Packet Structure (Big-Endian):
++--------+--------+--------+--------+
+| Version| 0x0E   |Sub-Type| Flags  |
++--------+--------+--------+--------+
+|    Session ID (Variable Length)   |
 +-----------------------------------+
-|      Optimized Common Header      |
-|           (50 bytes)             |
+|       Sequence Number (32-bit)    |
++-----------------------------------+
+|    Acknowledgment Number (32-bit) |
++-----------------------------------+
+|  Timestamp (Variable Length)      |
++-----------------------------------+
+|    Payload Length (16-bit)       |
++-----------------------------------+
+|      HMAC (128-bit - Full)       |
+|                                 |
 +-----------------------------------+
 |       Discovery Payload          |
 |        (Variable Length)         |
@@ -674,7 +872,6 @@ DISCOVERY_REQUEST (Sub-Type 0x01):
 |     (Variable Length)            |
 |    (512 bytes maximum)           |
 +-----------------------------------+
-Total: 50 + 20 + bloom_filter_size bytes (max 582 bytes)
 
 DISCOVERY_RESPONSE (Sub-Type 0x02):
 +-----------------------------------+
@@ -692,7 +889,6 @@ DISCOVERY_RESPONSE (Sub-Type 0x02):
 |   (32 bytes per candidate)       |
 |   (Variable Length)              |
 +-----------------------------------+
-Total: 50 + 12 + (32 * candidate_count) bytes
 
 DISCOVERY_CONFIRM (Sub-Type 0x03):
 +-----------------------------------+
@@ -707,7 +903,6 @@ DISCOVERY_CONFIRM (Sub-Type 0x03):
 +-----------------------------------+
 |        Reserved (16-bit)         |
 +-----------------------------------+
-+-----------------------------------+
 |        Session ID (64-bit)        |
 +-----------------------------------+
 |      Reserved (16-bit)            |
@@ -715,5 +910,21 @@ DISCOVERY_CONFIRM (Sub-Type 0x03):
 |        Commitment (128-bit)        |
 |                                 |
 +-----------------------------------+
-Total: 50 + 52 = 102 bytes
+
+Total Size: Adaptive header + 20-582 bytes payload (varies by sub-type)
 ```
+
+## Configuration Negotiation
+
+During connection establishment, peers negotiate the optimal configuration through the SYN/SYN-ACK exchange:
+
+1. **SYN**: Client proposes configuration via version byte encoding
+2. **SYN-ACK**: Server confirms or modifies configuration  
+3. **Subsequent packets**: Use the negotiated format consistently
+
+The negotiated configuration includes:
+- Session ID length (16-bit, 32-bit, or 64-bit)
+- Timestamp size (16-bit, 24-bit, or 32-bit)  
+- HMAC policy (based on security requirements)
+
+This ensures optimal efficiency for each deployment scenario while maintaining protocol compatibility.

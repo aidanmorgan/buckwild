@@ -713,3 +713,308 @@ function emergency_congestion_recovery():
     clear_send_buffers()
     restart_transmission_with_reduced_rate()
 ```
+
+## Detailed Fragmentation Specification
+
+### Fragment Header Structure
+
+The fragment header provides all necessary information for reliable reassembly of fragmented messages. Each fragment carries an 8-byte header immediately following the flow control header in DATA packets.
+
+```pseudocode
+// Fragment header constants (from 02-core-definitions.md)
+FRAGMENT_HEADER_SIZE = 8                 // Fragment header size in bytes
+MAX_FRAGMENTS = 255                      // Maximum fragments per packet
+MAX_FRAGMENT_SIZE = 1400                // Maximum fragment payload size (bytes)
+FRAGMENT_REASSEMBLY_BUFFER_SIZE = 64    // Maximum fragments in reassembly buffer
+FRAGMENT_ID_SPACE = 0xFFFF              // Fragment ID space (16-bit)
+FRAGMENT_DUPLICATE_WINDOW = 100         // Window for detecting duplicate fragments
+FRAGMENT_TIMEOUT_MS = 30000             // Fragment reassembly timeout (30 seconds)
+
+// Fragment header structure (8 bytes total)
+// For complete field layout and packet integration, see the "Fragmentation Fields" 
+// section in 03-packet-architecture.md
+struct FragmentHeader {
+    uint16_t fragment_id;      // Unique identifier for fragmented message
+    uint16_t fragment_index;   // Zero-based index of this fragment
+    uint16_t total_fragments;  // Total number of fragments in message
+    uint16_t reserved;         // Reserved for future use (must be 0x0000)
+}
+```
+
+### Fragment ID Generation and Management
+
+```pseudocode
+// Fragment ID state management
+fragment_id_state = {
+    'next_fragment_id': 0,
+    'recent_fragment_ids': CircularBuffer(FRAGMENT_DUPLICATE_WINDOW),
+    'id_generation_counter': 0
+}
+
+function generate_unique_fragment_id():
+    # Generate cryptographically random fragment ID
+    # Ensures unpredictability to prevent fragment prediction attacks
+    
+    max_attempts = 100
+    for attempt in range(max_attempts):
+        # Generate random 16-bit value
+        candidate_id = secure_random_uint16()
+        
+        # Ensure ID is not recently used
+        if candidate_id not in fragment_id_state.recent_fragment_ids:
+            # Add to recent IDs list
+            fragment_id_state.recent_fragment_ids.add(candidate_id)
+            fragment_id_state.id_generation_counter += 1
+            
+            # Periodic cleanup of old IDs
+            if fragment_id_state.id_generation_counter % 1000 == 0:
+                cleanup_expired_fragment_ids()
+            
+            return candidate_id
+    
+    # Fallback: use counter-based ID if random generation fails
+    fallback_id = (fragment_id_state.next_fragment_id + 1) % FRAGMENT_ID_SPACE
+    fragment_id_state.next_fragment_id = fallback_id
+    fragment_id_state.recent_fragment_ids.add(fallback_id)
+    return fallback_id
+
+function cleanup_expired_fragment_ids():
+    # Remove fragment IDs older than timeout window
+    current_time = get_current_time_ms()
+    fragment_id_state.recent_fragment_ids.remove_older_than(
+        current_time - FRAGMENT_TIMEOUT_MS
+    )
+```
+
+### Fragment Validation
+
+```pseudocode
+function validate_fragment_packet(fragment_packet):
+    # Comprehensive fragment validation
+    
+    # Check fragment flag is set
+    if not (fragment_packet.flags & FRAGMENT_FLAG):
+        return ERROR_FRAGMENT_INVALID
+    
+    # Extract fragment header
+    fragment_header = fragment_packet.fragment_header
+    
+    # Validate fragment index
+    if fragment_header.fragment_index >= fragment_header.total_fragments:
+        return ERROR_FRAGMENT_INVALID
+    
+    # Validate total fragments count
+    if fragment_header.total_fragments == 0 or fragment_header.total_fragments > MAX_FRAGMENTS:
+        return ERROR_FRAGMENT_INVALID
+    
+    # Validate reserved field
+    if fragment_header.reserved != 0x0000:
+        return ERROR_FRAGMENT_INVALID
+    
+    # Check for fragment bomb attack (excessive fragments)
+    if fragment_header.total_fragments > calculate_max_fragments_for_size(MAX_PACKET_SIZE):
+        return ERROR_FRAGMENT_BOMB
+    
+    # Validate payload size
+    expected_size = calculate_expected_fragment_size(
+        fragment_header.fragment_index,
+        fragment_header.total_fragments,
+        fragment_packet.payload_length
+    )
+    if fragment_packet.payload_length > expected_size:
+        return ERROR_FRAGMENT_INVALID
+    
+    return SUCCESS
+
+function calculate_max_fragments_for_size(max_total_size):
+    # Calculate maximum reasonable fragments for a given total size
+    # Prevents fragment bomb attacks
+    header_overhead = OPTIMIZED_COMMON_HEADER_SIZE + FLOW_CONTROL_HEADER_SIZE + FRAGMENT_HEADER_SIZE
+    min_fragment_payload = 64  # Minimum reasonable fragment payload
+    max_reasonable_fragments = max_total_size // (header_overhead + min_fragment_payload)
+    return min(max_reasonable_fragments, MAX_FRAGMENTS)
+```
+
+### Reassembly Buffer Management
+
+```pseudocode
+// Fragment reassembly buffer structure
+struct ReassemblyBuffer {
+    uint16_t fragment_id;
+    uint16_t total_fragments;
+    uint16_t received_count;
+    uint32_t first_fragment_time;
+    uint32_t timeout;
+    FragmentPacket* fragments[MAX_FRAGMENTS];  // Array of fragment pointers
+    uint32_t total_reassembled_size;
+    uint8_t reassembly_state;  // PENDING, COMPLETE, FAILED
+}
+
+// Reassembly state management
+reassembly_state = {
+    'active_buffers': HashMap<fragment_id, ReassemblyBuffer>,
+    'buffer_count': 0,
+    'last_cleanup_time': 0
+}
+
+function get_or_create_reassembly_buffer(fragment_id, total_fragments):
+    # Get existing or create new reassembly buffer
+    
+    if fragment_id in reassembly_state.active_buffers:
+        return reassembly_state.active_buffers[fragment_id]
+    
+    # Check buffer limit
+    if reassembly_state.buffer_count >= FRAGMENT_REASSEMBLY_BUFFER_SIZE:
+        # Evict oldest incomplete buffer
+        evict_oldest_reassembly_buffer()
+    
+    # Create new buffer
+    new_buffer = ReassemblyBuffer {
+        fragment_id: fragment_id,
+        total_fragments: total_fragments,
+        received_count: 0,
+        first_fragment_time: get_current_time_ms(),
+        timeout: get_current_time_ms() + FRAGMENT_TIMEOUT_MS,
+        fragments: [null] * total_fragments,
+        total_reassembled_size: 0,
+        reassembly_state: REASSEMBLY_PENDING
+    }
+    
+    reassembly_state.active_buffers[fragment_id] = new_buffer
+    reassembly_state.buffer_count += 1
+    
+    return new_buffer
+
+function evict_oldest_reassembly_buffer():
+    # Find and remove oldest incomplete reassembly buffer
+    oldest_time = MAX_UINT32
+    oldest_id = null
+    
+    for fragment_id, buffer in reassembly_state.active_buffers.items():
+        if buffer.first_fragment_time < oldest_time:
+            oldest_time = buffer.first_fragment_time
+            oldest_id = fragment_id
+    
+    if oldest_id != null:
+        cleanup_reassembly_buffer(reassembly_state.active_buffers[oldest_id])
+        del reassembly_state.active_buffers[oldest_id]
+        reassembly_state.buffer_count -= 1
+```
+
+### Fragment Reassembly Process
+
+```pseudocode
+function reassemble_complete_message(reassembly_buffer):
+    # Reassemble all fragments into complete message
+    
+    # Verify all fragments are present
+    for i in range(reassembly_buffer.total_fragments):
+        if reassembly_buffer.fragments[i] == null:
+            return ERROR_FRAGMENT_MISSING
+    
+    # Calculate total message size
+    total_size = 0
+    for fragment in reassembly_buffer.fragments:
+        total_size += len(fragment.payload)
+    
+    # Allocate buffer for complete message
+    complete_message = allocate_buffer(total_size)
+    if complete_message == null:
+        return ERROR_MEMORY_EXHAUSTED
+    
+    # Copy fragment payloads in order
+    offset = 0
+    for i in range(reassembly_buffer.total_fragments):
+        fragment = reassembly_buffer.fragments[i]
+        copy_memory(
+            complete_message + offset,
+            fragment.payload,
+            len(fragment.payload)
+        )
+        offset += len(fragment.payload)
+    
+    # Verify reassembly
+    if offset != total_size:
+        free_buffer(complete_message)
+        return ERROR_FRAGMENT_REASSEMBLY_FAILED
+    
+    reassembly_buffer.reassembly_state = REASSEMBLY_COMPLETE
+    
+    return complete_message
+
+function handle_fragment_overlap_attack(reassembly_buffer, fragment_packet):
+    # Detect and handle fragment overlap attacks
+    
+    fragment_index = fragment_packet.fragment_header.fragment_index
+    
+    # Check if fragment already received
+    if reassembly_buffer.fragments[fragment_index] != null:
+        existing_fragment = reassembly_buffer.fragments[fragment_index]
+        
+        # Compare payloads
+        if not compare_fragment_payloads(existing_fragment, fragment_packet):
+            # Fragment overlap attack detected
+            log_security_event(FRAGMENT_OVERLAP_ATTACK, fragment_packet)
+            
+            # Mark entire reassembly as failed
+            reassembly_buffer.reassembly_state = REASSEMBLY_FAILED
+            
+            return ERROR_FRAGMENT_OVERLAP
+    
+    return SUCCESS
+```
+
+### Fragment Timeout and Cleanup
+
+```pseudocode
+function fragment_timeout_handler():
+    # Periodic handler for fragment timeout management
+    current_time = get_current_time_ms()
+    
+    # Check cleanup interval
+    if current_time - reassembly_state.last_cleanup_time < FRAGMENT_CLEANUP_INTERVAL_MS:
+        return
+    
+    expired_buffers = []
+    
+    # Find expired reassembly buffers
+    for fragment_id, buffer in reassembly_state.active_buffers.items():
+        if current_time > buffer.timeout:
+            expired_buffers.append(fragment_id)
+    
+    # Process expired buffers
+    for fragment_id in expired_buffers:
+        buffer = reassembly_state.active_buffers[fragment_id]
+        
+        # Log timeout event
+        log_fragment_timeout(
+            fragment_id,
+            buffer.received_count,
+            buffer.total_fragments
+        )
+        
+        # Request retransmission if significant progress made
+        if buffer.received_count >= buffer.total_fragments * 0.5:
+            request_selective_fragment_retransmission(buffer)
+        
+        # Cleanup buffer
+        cleanup_reassembly_buffer(buffer)
+        del reassembly_state.active_buffers[fragment_id]
+        reassembly_state.buffer_count -= 1
+    
+    reassembly_state.last_cleanup_time = current_time
+
+function request_selective_fragment_retransmission(reassembly_buffer):
+    # Request retransmission of missing fragments only
+    missing_fragments = []
+    
+    for i in range(reassembly_buffer.total_fragments):
+        if reassembly_buffer.fragments[i] == null:
+            missing_fragments.append(i)
+    
+    # Send NACK for missing fragments
+    send_fragment_nack(
+        reassembly_buffer.fragment_id,
+        missing_fragments
+    )
+```

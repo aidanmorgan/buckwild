@@ -339,114 +339,15 @@ function create_adaptive_bloom_filter(psk_fingerprints, discovery_id, session_sa
 
 ### DISCOVERY_REQUEST Packet (Sub-Type 0x01)
 
-```pseudocode
-DISCOVERY_REQUEST Packet Structure (Big-Endian):
-+-----------------------------------+
-|      Optimized Common Header      |
-|           (50 bytes)             |
-+-----------------------------------+
-|        Discovery ID (64-bit)     |
-+-----------------------------------+
-|       Session Salt (32-bit)      |
-+-----------------------------------+
-| Fingerprint Count|Bloom Filter   |
-|     (16-bit)     | Size (16-bit) |
-+-------------------+---------------+
-| Initiator Features|   Reserved   |
-|    (16-bit)      |   (16-bit)   |
-+-------------------+---------------+
-|     Bloom Filter Data            |
-|     (Variable Length)            |
-|    (512 bytes maximum)           |
-+-----------------------------------+
-
-Field Definitions:
-- Optimized Common Header (50 bytes): Standard header with DISCOVERY type and REQUEST sub-type
-- Discovery ID (64-bit): Unique identifier for this discovery session
-- Session Salt (32-bit): Salt for blinding fingerprints in this session
-- Fingerprint Count (16-bit): Number of PSK fingerprints in local set
-- Bloom Filter Size (16-bit): Size of Bloom filter in bytes
-- Initiator Features (16-bit): Bitmap of supported discovery features
-- Reserved (16-bit): Always 0x0000
-- Bloom Filter Data (Variable): Probabilistic set representation (max 512 bytes)
-
-Total Size: 50 + 20 + bloom_filter_size bytes (max 582 bytes)
-```
+For the complete packet structure and field definitions, see the **DISCOVERY Packet (Type 0x0E)** section in [03-packet-architecture.md](03-packet-architecture.md), specifically the **DISCOVERY_REQUEST (Sub-Type 0x01)** payload specification.
 
 ### DISCOVERY_RESPONSE Packet (Sub-Type 0x02)
 
-```pseudocode
-DISCOVERY_RESPONSE Packet Structure (Big-Endian):
-+-----------------------------------+
-|      Optimized Common Header      |
-|           (50 bytes)             |
-+-----------------------------------+
-|        Discovery ID (64-bit)     |
-+-----------------------------------+
-|   Candidate Count (16-bit)       |
-+-----------------------------------+
-|  Intersection Status (16-bit)    |
-+-----------------------------------+
-| Responder Features|   Reserved   |
-|    (16-bit)      |   (16-bit)   |
-+-------------------+---------------+
-|    Candidate Intersection        |
-|         Hashes                   |
-|   (32 bytes per candidate)       |
-|   (Variable Length)              |
-+-----------------------------------+
-
-Field Definitions:
-- Optimized Common Header (50 bytes): Standard header with DISCOVERY type and RESPONSE sub-type
-- Discovery ID (64-bit): Matching discovery session identifier
-- Candidate Count (16-bit): Number of intersection candidates found
-- Intersection Status (16-bit): Status of intersection operation
-- Responder Features (16-bit): Bitmap of supported discovery features
-- Reserved (16-bit): Always 0x0000
-- Candidate Intersection Hashes (Variable): Hash values of potential intersections (32 bytes each)
-
-Total Size: 50 + 12 + (32 * candidate_count) bytes
-```
+For the complete packet structure and field definitions, see the **DISCOVERY Packet (Type 0x0E)** section in [03-packet-architecture.md](03-packet-architecture.md), specifically the **DISCOVERY_RESPONSE (Sub-Type 0x02)** payload specification.
 
 ### DISCOVERY_CONFIRM Packet (Sub-Type 0x03)
 
-```pseudocode
-DISCOVERY_CONFIRM Packet Structure (Big-Endian):
-+-----------------------------------+
-|      Optimized Common Header      |
-|           (50 bytes)             |
-+-----------------------------------+
-|        Discovery ID (64-bit)     |
-+-----------------------------------+
-|    Confirmation Hash (256-bit)   |
-|   (Selected PSK fingerprint      |
-|    confirmation hash)            |
-|                                 |
-+-----------------------------------+
-|  Confirmation Status (16-bit)    |
-+-----------------------------------+
-|        Reserved (16-bit)         |
-+-----------------------------------+
-|        Session ID (64-bit)       |
-+-----------------------------------+
-|      Reserved (16-bit)           |
-+-----------------------------------+
-|        Commitment (128-bit)      |
-|                                 |
-+-----------------------------------+
-
-Field Definitions:
-- Optimized Common Header (50 bytes): Standard header with DISCOVERY type and CONFIRM sub-type
-- Discovery ID (64-bit): Matching discovery session identifier
-- Confirmation Hash (256-bit): SHA256 confirmation of selected PSK fingerprint
-- Confirmation Status (16-bit): Status of PSK confirmation (CONFIRMED, REJECTED, etc.)
-- Reserved (16-bit): Always 0x0000
-- Session ID (64-bit): New session identifier for subsequent communication
-- Reserved (16-bit): Always 0x0000
-- Commitment (128-bit): Cryptographic commitment for session establishment
-
-Total Size: 50 + 52 = 102 bytes
-```
+For the complete packet structure and field definitions, see the **DISCOVERY Packet (Type 0x0E)** section in [03-packet-architecture.md](03-packet-architecture.md), specifically the **DISCOVERY_CONFIRM (Sub-Type 0x03)** payload specification.
 
 ## Integration with ECDH Connection Establishment
 

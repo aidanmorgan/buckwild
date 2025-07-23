@@ -16,6 +16,7 @@ Time synchronization serves critical coordination and security functions:
 - **Security Enforcement**: Ensures time-based security windows (like anti-replay protection) work correctly across peers
 - **Precision Management**: Provides sub-second accuracy required for 500ms port hopping intervals
 - **Drift Compensation**: Handles gradual clock drift between peers without disrupting communication
+- **Month Boundary Management**: Coordinates timestamp epoch transitions at month boundaries
 
 The synchronization system uses challenge-response protocols with cryptographic validation to ensure timing information cannot be spoofed or manipulated by attackers.
 
@@ -33,33 +34,53 @@ The synchronization system uses challenge-response protocols with cryptographic 
 ### UTC-Based Time Windows
 
 ```pseudocode
-# Time windows are 500ms wide and based on UTC time from start of current day
+# Time windows are 500ms wide with dual epoch system:
+# - Base port hopping (connection establishment): 500ms buckets since UTC midnight current day
+# - Session packet timestamps: 500ms buckets since UTC midnight current month
 # This ensures synchronized port hopping across all peers regardless of timezone
 # 
-# Time window calculation:
+# Session time calculation (for established connections):
 # 1. Get current UTC time in milliseconds since epoch
-# 2. Calculate milliseconds since start of current UTC day
-# 3. Divide by 500ms to get current time window number
-# 4. Use time window number for port calculation
+# 2. Calculate milliseconds since start of current UTC month
+# 3. Divide by 500ms to get current time window number (integer division)
+# 4. Use time window number for session port calculation
 #
-# Example: If current UTC time is 14:30:25.123, then:
-# - Milliseconds since start of day = (14*3600 + 30*60 + 25)*1000 + 123 = 52225123ms
-# - Time window = 52225123 // 500 = 104450 (window number)
-# - Port will be calculated using this window number
+# Base port time calculation (for connection establishment):
+# 1. Get current UTC time in milliseconds since epoch
+# 2. Calculate milliseconds since UTC midnight of current day
+# 3. Divide by 500ms to get current time bucket number (integer division)
+# 4. Use time bucket number with daily key for base port calculation
+#
+# Example: If current UTC time is 14:30:25.123 on March 15th, then:
+# - Session: March 1st 00:00:00 UTC start, offset = current_time - march_1st_start
+# - Base port: March 15th 00:00:00 UTC start, offset = current_time - march_15th_start
+# - Time window/bucket = offset // 500 (500ms buckets since respective midnight)
 
 function get_current_time_window():
-    # Get current UTC time window for port hopping
+    # Get current UTC time window for session packet port hopping
     current_utc_ms = get_current_utc_time_ms()
     
-    # Calculate milliseconds since start of current UTC day
-    ms_since_epoch = current_utc_ms
-    ms_per_day = 24 * 60 * 60 * 1000  # 86400000 ms
-    ms_since_day_start = ms_since_epoch % ms_per_day
+    # Calculate milliseconds since start of current UTC month (for session packets)
+    month_start_utc = get_current_month_start_utc()
+    ms_since_month_start = current_utc_ms - month_start_utc
     
     # Calculate time window number (500ms windows)
-    time_window = ms_since_day_start // HOP_INTERVAL_MS
+    time_window = ms_since_month_start // HOP_INTERVAL_MS
     
     return time_window
+
+function get_current_base_port_time_bucket():
+    # Get current 500ms time bucket for base port hopping (connection establishment)
+    current_utc_ms = get_current_utc_time_ms()
+    
+    # Calculate milliseconds since UTC midnight of current day (for base port hopping)
+    day_start_utc = get_current_day_start_utc()  # UTC midnight of current day
+    ms_since_midnight_utc = current_utc_ms - day_start_utc
+    
+    # Calculate 500ms time bucket number since UTC midnight
+    time_bucket = ms_since_midnight_utc // HOP_INTERVAL_MS  # HOP_INTERVAL_MS = 500
+    
+    return time_bucket
 
 function get_synchronized_time():
     # Get current time with synchronization offset applied
@@ -67,10 +88,19 @@ function get_synchronized_time():
     return local_time + time_sync_state.local_offset
 
 function get_synchronized_time_window():
-    # Get time window using synchronized time
+    # Get time window using synchronized time (for session packets)
     synchronized_time = get_synchronized_time()
-    ms_since_day_start = synchronized_time % MILLISECONDS_PER_DAY
-    return ms_since_day_start // HOP_INTERVAL_MS
+    month_start_utc = get_current_month_start_utc()
+    ms_since_month_start = synchronized_time - month_start_utc
+    return ms_since_month_start // HOP_INTERVAL_MS
+
+function get_synchronized_base_port_time_bucket():
+    # Get 500ms time bucket using synchronized time (for base port hopping)
+    synchronized_time = get_synchronized_time()
+    day_start_utc = get_current_day_start_utc()  # UTC midnight of current day
+    ms_since_midnight_utc = synchronized_time - day_start_utc
+    # Return 500ms bucket number since UTC midnight
+    return ms_since_midnight_utc // HOP_INTERVAL_MS  # HOP_INTERVAL_MS = 500
 
 function calculate_next_hop_time():
     # Calculate exact time of next port hop
@@ -78,12 +108,11 @@ function calculate_next_hop_time():
     next_window = current_window + 1
     
     synchronized_time = get_synchronized_time()
-    ms_since_day_start = synchronized_time % MILLISECONDS_PER_DAY
+    month_start_utc = get_current_month_start_utc()
     
     next_hop_ms = next_window * HOP_INTERVAL_MS
-    current_utc_day_start = synchronized_time - ms_since_day_start
     
-    return current_utc_day_start + next_hop_ms
+    return month_start_utc + next_hop_ms
 ```
 
 ## Time Synchronization State Management

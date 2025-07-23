@@ -28,17 +28,17 @@ sequenceDiagram
     participant Client
     participant Server
     
-    Note over Client,Server: Phase 1: Initial Handshake
+    Note over Client,Server: Phase 1: Initial Handshake<br/>🔑 Uses: Daily key (base port), PSK (authentication)
     Client->>Server: SYN (Type 0x01)
-    Note right of Client: - Sequence commitment<br/>- Initial windows<br/>- Time offset<br/>- Supported features
+    Note right of Client: - Sequence commitment<br/>- Initial windows<br/>- Time offset<br/>- Supported features<br/>🔑 Port: Daily key + UTC time bucket<br/>🔑 Auth: PSK for HMAC validation
     
     Server->>Client: SYN-ACK (Type 0x02)
-    Note left of Server: - Server sequence commitment<br/>- Sequence proof (validates client)<br/>- Negotiated features<br/>- Server time offset
+    Note left of Server: - Server sequence commitment<br/>- Sequence proof (validates client)<br/>- Negotiated features<br/>- Server time offset<br/>🔑 Port: Daily key + UTC time bucket<br/>🔑 Auth: PSK for HMAC validation
     
     Client->>Server: ACK (Type 0x03)
-    Note right of Client: - Acknowledges SYN-ACK<br/>- Completes three-way handshake<br/>- Connection established
+    Note right of Client: - Acknowledges SYN-ACK<br/>- Completes three-way handshake<br/>- Connection established<br/>🔑 Port: Daily key + UTC time bucket<br/>🔑 Auth: PSK for HMAC validation
     
-    Note over Client,Server: Connection Ready for Data Transfer
+    Note over Client,Server: Connection Ready for Data Transfer<br/>🔑 Future data packets use: Session key + month timestamps
 ```
 
 ### 1.2 Connection Establishment with PSK Discovery
@@ -48,22 +48,22 @@ sequenceDiagram
     participant Client
     participant Server
     
-    Note over Client,Server: Phase 1: PSK Discovery
+    Note over Client,Server: Phase 1: PSK Discovery<br/>🔑 Uses: Daily key (base port), No PSK yet (discovery phase)
     Client->>Server: DISCOVERY_REQUEST (Type 0x0E, Sub 0x01)
-    Note right of Client: - Discovery ID<br/>- PSK count hint<br/>- Challenge nonce<br/>- Cryptographic commitment
+    Note right of Client: - Discovery ID<br/>- PSK count hint<br/>- Challenge nonce<br/>- Cryptographic commitment<br/>🔑 Port: Daily key + UTC time bucket<br/>🔑 Auth: No shared PSK yet
     
     Server->>Client: DISCOVERY_RESPONSE (Type 0x0E, Sub 0x02)
-    Note left of Server: - Same discovery ID<br/>- PSK commitments<br/>- Response nonce<br/>- Server features
+    Note left of Server: - Same discovery ID<br/>- PSK commitments<br/>- Response nonce<br/>- Server features<br/>🔑 Port: Daily key + UTC time bucket<br/>🔑 Auth: Challenge-response validation
     
     Client->>Server: DISCOVERY_CONFIRM (Type 0x0E, Sub 0x03)
-    Note right of Client: - Selected PSK index<br/>- PSK selection proof<br/>- New session ID<br/>- Final commitment
+    Note right of Client: - Selected PSK index<br/>- PSK selection proof<br/>- New session ID<br/>- Final commitment<br/>🔑 Port: Daily key + UTC time bucket<br/>🔑 Auth: Selected PSK for proof
     
-    Note over Client,Server: Phase 2: Standard Handshake
+    Note over Client,Server: Phase 2: Standard Handshake with negotiated PSK<br/>🔑 Now uses: Daily key (base port), negotiated PSK (auth)
     Client->>Server: SYN (Type 0x01)
     Server->>Client: SYN-ACK (Type 0x02)
     Client->>Server: ACK (Type 0x03)
     
-    Note over Client,Server: Connection Established with Negotiated PSK
+    Note over Client,Server: Connection Established with Negotiated PSK<br/>🔑 Future packets use: Session key + month timestamps
 ```
 
 ### 1.3 Connection Establishment with ECDH Key Exchange
@@ -73,17 +73,17 @@ sequenceDiagram
     participant Client
     participant Server
     
-    Note over Client,Server: Phase 1: ECDH Handshake with PSK Authentication
+    Note over Client,Server: Phase 1: ECDH Handshake with PSK Authentication<br/>🔑 Uses: Daily key (base port calculation), PSK (authentication)
     Client->>Server: SYN (Type 0x01)
-    Note right of Client: - Client ECDH Public Key<br/>- PSK Authentication<br/>- Key Exchange ID
+    Note right of Client: - Client ECDH Public Key<br/>- PSK Authentication (HMAC with PSK)<br/>- Key Exchange ID<br/>🔑 Port: Daily key + UTC time bucket<br/>🔑 Auth: PSK for HMAC validation
     
     Server->>Client: SYN-ACK (Type 0x02)
-    Note left of Server: - Server ECDH Public Key<br/>- Shared Secret Verification Hash<br/>- Echo Key Exchange ID
+    Note left of Server: - Server ECDH Public Key<br/>- Shared Secret Verification Hash<br/>- Echo Key Exchange ID<br/>🔑 Port: Daily key + UTC time bucket<br/>🔑 Auth: PSK for HMAC validation
     
     Client->>Server: ACK (Type 0x03)
-    Note right of Client: - Connection Complete<br/>- Both peers derive identical:<br/>  • Sequence numbers (PBKDF2)<br/>  • Port offsets (PBKDF2)<br/>  • Session keys (PBKDF2)
+    Note right of Client: - Connection Complete<br/>- Both peers derive identical:<br/>  • Sequence numbers (PBKDF2 chunks 0-3)<br/>  • Port hop seed (PBKDF2 chunks 22-23)<br/>  • Session keys (PBKDF2 chunks 6-21)<br/>🔑 Port: Daily key + UTC time bucket<br/>🔑 Auth: PSK for HMAC validation
     
-    Note over Client,Server: Connection with ECDH-Derived Parameters
+    Note over Client,Server: Connection with ECDH-Derived Parameters<br/>🔑 Future packets use: Session key + month timestamps
 ```
 
 ### 1.4 Privacy-Preserving PSK Discovery
@@ -120,20 +120,20 @@ sequenceDiagram
     participant Sender
     participant Receiver
     
-    Note over Sender,Receiver: Data Transmission Window
+    Note over Sender,Receiver: Data Transmission Window<br/>🔑 Uses: Session key (HMAC), month-based timestamps, ECDH-derived ports
     Sender->>Receiver: DATA (Type 0x04, Seq 100)
-    Note right of Sender: - Application data<br/>- Flow control info<br/>- Window advertisement
+    Note right of Sender: - Application data<br/>- Flow control info<br/>- Window advertisement<br/>🔑 Port: ECDH-derived + time window<br/>🔑 Auth: Session key (PBKDF2 chunks 6-21)<br/>🔑 Time: Month-based timestamp
     
     Sender->>Receiver: DATA (Type 0x04, Seq 101)
     Sender->>Receiver: DATA (Type 0x04, Seq 102)
     
     Receiver->>Sender: ACK (Type 0x03, Ack 103)
-    Note left of Receiver: - Acknowledges up to 102<br/>- Window update<br/>- Flow control feedback
+    Note left of Receiver: - Acknowledges up to 102<br/>- Window update<br/>- Flow control feedback<br/>🔑 Port: ECDH-derived + time window<br/>🔑 Auth: Session key (adaptive HMAC)<br/>🔑 Time: Month-based timestamp
     
     Sender->>Receiver: DATA (Type 0x04, Seq 103)
     Sender->>Receiver: DATA (Type 0x04, Seq 104)
     
-    Note over Sender,Receiver: Continuous data flow with periodic ACKs
+    Note over Sender,Receiver: Continuous data flow with periodic ACKs<br/>🔑 All packets use session-derived parameters
 ```
 
 ### 2.2 Data Transmission with Packet Loss and SACK
@@ -212,17 +212,16 @@ sequenceDiagram
     participant Client
     participant Server
     
-    Note over Client: Detects time drift
+    Note over Client: Detects time drift<br/>🔑 Impact: Port hopping misalignment
     Client->>Server: CONTROL (Type 0x0C, Sub TIME_SYNC_REQUEST 0x01)
-    Note right of Client: - Challenge nonce<br/>- Local timestamp<br/>- Sync request
+    Note right of Client: - Challenge nonce<br/>- Local timestamp<br/>- Sync request<br/>🔑 Port: ECDH-derived + time window<br/>🔑 Auth: Session key (strong HMAC)<br/>🔑 Time: Month-based timestamp
     
-    Note over Server: Records request time
+    Note over Server: Records request time<br/>🔑 Validates challenge nonce for replay protection
     Server->>Client: CONTROL (Type 0x0C, Sub TIME_SYNC_RESPONSE 0x02)
-    Note left of Server: - Same challenge nonce<br/>- Server timestamp<br/>- Peer timestamp echo
+    Note left of Server: - Same challenge nonce<br/>- Server timestamp<br/>- Peer timestamp echo<br/>🔑 Port: ECDH-derived + time window<br/>🔑 Auth: Session key (strong HMAC)<br/>🔑 Nonce: Cryptographically bound to request
     
-    Note over Client: Calculates time offset and RTT
-    Note over Client,Server: Time synchronization complete
-    Note over Client,Server: Port hopping resynchronized
+    Note over Client: Calculates time offset and RTT<br/>🔑 Updates local time synchronization state
+    Note over Client,Server: Time synchronization complete<br/>Port hopping resynchronized<br/>🔑 Both peers now use corrected time windows
 ```
 
 ## 4. Recovery Scenarios
@@ -279,19 +278,18 @@ sequenceDiagram
     participant Peer A
     participant Peer B
     
-    Note over Peer A: Authentication failures trigger rekey
+    Note over Peer A: Authentication failures trigger rekey<br/>🔑 Current: Old session key compromised
     
     Peer A->>Peer B: MANAGEMENT (Type 0x0D, Sub REKEY_REQUEST 0x01)
-    Note right of Peer A: - Rekey nonce<br/>- ECDH Public Key<br/>- Cryptographic proof
+    Note right of Peer A: - Rekey nonce<br/>- New ECDH Public Key<br/>- Cryptographic proof<br/>🔑 Port: ECDH-derived (old key) + time window<br/>🔑 Auth: Old session key (strong HMAC)<br/>🔑 Nonce: Replay protection for rekey
     
     Peer B->>Peer A: MANAGEMENT (Type 0x0D, Sub REKEY_RESPONSE 0x02)
-    Note left of Peer B: - Same rekey nonce<br/>- ECDH Public Key<br/>- Shared secret hash
+    Note left of Peer B: - Same rekey nonce<br/>- New ECDH Public Key<br/>- Shared secret hash<br/>🔑 Port: ECDH-derived (old key) + time window<br/>🔑 Auth: Old session key (strong HMAC)<br/>🔑 Proof: New shared secret verification
     
-    Note over Peer A,Peer B: Both derive new session keys from ECDH
-    Note over Peer A,Peer B: Atomic key switch with forward secrecy
+    Note over Peer A,Peer B: Both derive new session keys from fresh ECDH<br/>New keys: PBKDF2(new_ecdh_secret)<br/>- Session key (chunks 6-21)<br/>- Port hop seed (chunks 22-23)<br/>- Sequence parameters (chunks 0-5)<br/>🔑 Perfect forward secrecy achieved
     
     Peer A->>Peer B: DATA (Type 0x04)
-    Note right of Peer A: First packet with ECDH-derived key
+    Note right of Peer A: First packet with new ECDH-derived key<br/>🔑 Port: New ECDH-derived + time window<br/>🔑 Auth: New session key<br/>🔑 Time: Month-based timestamp (unchanged)
     
     Peer B->>Peer A: ACK (Type 0x03)
     Note left of Peer B: Confirms new ECDH key works
@@ -422,16 +420,15 @@ sequenceDiagram
     participant Peer A
     participant Peer B
     
-    Note over Peer A,Peer B: 30 seconds of idle time
+    Note over Peer A,Peer B: 30 seconds of idle time<br/>🔑 Uses: Session key, month timestamps, ECDH ports
     
     Peer A->>Peer B: HEARTBEAT (Type 0x06)
-    Note right of Peer A: - Current time<br/>- Window advertisement<br/>- Delay negotiation data<br/>- Network statistics
+    Note right of Peer A: - Current time<br/>- Window advertisement<br/>- Delay negotiation data<br/>- Network statistics<br/>🔑 Port: ECDH-derived + time window<br/>🔑 Auth: Session key (strong HMAC)<br/>🔑 Time: Month-based timestamp
     
     Peer B->>Peer A: HEARTBEAT (Type 0x06)
-    Note left of Peer B: - Response heartbeat<br/>- Peer network metrics<br/>- Delay parameters<br/>- Connection health
+    Note left of Peer B: - Response heartbeat<br/>- Peer network metrics<br/>- Delay parameters<br/>- Connection health<br/>🔑 Port: ECDH-derived + time window<br/>🔑 Auth: Session key (strong HMAC)<br/>🔑 Time: Month-based timestamp
     
-    Note over Peer A,Peer B: Connection verified alive
-    Note over Peer A,Peer B: Delay parameters negotiated
+    Note over Peer A,Peer B: Connection verified alive<br/>Delay parameters negotiated<br/>🔑 Both peers update session state with negotiated parameters
 ```
 
 ### 7.2 Heartbeat Timeout and Recovery
@@ -859,4 +856,431 @@ sequenceDiagram
     Receiver->>Sender: ACK (Type 0x03)
     
     Note over Sender,Receiver: Adaptive fragmentation established
+```
+
+## 15. Month Boundary and Timestamp Management
+
+### 15.1 Month Boundary Timestamp Transition
+
+```mermaid
+sequenceDiagram
+    participant Peer A
+    participant Peer B
+    
+    Note over Peer A,Peer B: 1 hour before month boundary
+    Note over Peer A,Peer B: March 31, 23:00 UTC
+    
+    Peer A->>Peer B: CONTROL (Type 0x0C, Sub TIME_SYNC_REQUEST 0x01)
+    Note right of Peer A: - Month transition preparation<br/>- Sync before boundary<br/>- Current: March epoch
+    
+    Peer B->>Peer A: CONTROL (Type 0x0C, Sub TIME_SYNC_RESPONSE 0x02)
+    Note left of Peer B: - Confirm preparation<br/>- March epoch alignment<br/>- Ready for transition
+    
+    Note over Peer A,Peer B: Month boundary: April 1, 00:00 UTC
+    Note over Peer A,Peer B: Both detect new month epoch
+    
+    Note over Peer A: Update timestamp calculations
+    Note over Peer A: Reset to April epoch (ms since April 1)
+    Note over Peer B: Update timestamp calculations
+    Note over Peer B: Reset to April epoch (ms since April 1)
+    
+    Peer A->>Peer B: DATA (Type 0x04, April timestamp)
+    Note right of Peer A: First packet with April epoch
+    
+    Peer B->>Peer A: ACK (Type 0x03, April timestamp)
+    Note left of Peer B: Confirm April epoch working
+    
+    Note over Peer A,Peer B: Month boundary transition complete
+```
+
+### 15.2 Clock Regression Handling
+
+```mermaid
+sequenceDiagram
+    participant Peer A
+    participant Peer B
+    
+    Note over Peer A,Peer B: Normal operation with synchronized time
+    
+    Peer A->>Peer B: DATA (Type 0x04, Timestamp T1)
+    Note right of Peer A: Current time: T1
+    
+    Note over Peer A: System time correction occurs
+    Note over Peer A: Clock moves backward 30 seconds
+    
+    Note over Peer A: Detects clock regression
+    Note over Peer A: Current time < last sent timestamp
+    
+    Peer A->>Peer B: CONTROL (Type 0x0C, Sub TIME_SYNC_REQUEST 0x01)
+    Note right of Peer A: - Emergency time sync<br/>- Clock regression detected<br/>- Request time validation
+    
+    Peer B->>Peer A: CONTROL (Type 0x0C, Sub TIME_SYNC_RESPONSE 0x02)
+    Note left of Peer B: - Provide reference time<br/>- Detect regression<br/>- Calculate adjustment
+    
+    Note over Peer A: Calculate time offset adjustment
+    Note over Peer A: Apply gradual correction
+    
+    Peer A->>Peer B: DATA (Type 0x04, Corrected timestamp)
+    Note right of Peer A: Resume with adjusted time
+    
+    Note over Peer A,Peer B: Synchronization restored
+```
+
+### 15.3 Leap Second Handling
+
+```mermaid
+sequenceDiagram
+    participant Peer A
+    participant Peer B
+    
+    Note over Peer A,Peer B: 2 seconds before leap second
+    Note over Peer A,Peer B: 23:59:58 UTC
+    
+    Note over Peer A: Leap second event detected
+    Note over Peer B: Leap second event detected
+    
+    Note over Peer A,Peer B: Pause time adjustments
+    Note over Peer A,Peer B: Enter leap second window
+    
+    Note over Peer A,Peer B: 23:59:60 UTC (leap second)
+    
+    Peer A->>Peer B: DATA (Type 0x04, Leap second timestamp)
+    Note right of Peer A: Special leap second handling
+    
+    Peer B->>Peer A: ACK (Type 0x03, Leap second timestamp)
+    Note left of Peer B: Acknowledge leap second packet
+    
+    Note over Peer A,Peer B: 00:00:00 UTC (next day)
+    Note over Peer A,Peer B: Resume normal time calculations
+    
+    Note over Peer A: Update time synchronization
+    Note over Peer B: Update time synchronization
+    
+    Peer A->>Peer B: CONTROL (Type 0x0C, Sub TIME_SYNC_REQUEST 0x01)
+    Note right of Peer A: Post-leap verification sync
+    
+    Peer B->>Peer A: CONTROL (Type 0x0C, Sub TIME_SYNC_RESPONSE 0x02)
+    Note left of Peer B: Confirm post-leap sync
+    
+    Note over Peer A,Peer B: Normal operation resumed
+```
+
+## 16. Session Management and Configuration
+
+### 16.1 Session ID Collision Resolution
+
+```mermaid
+sequenceDiagram
+    participant Client A
+    participant Server
+    participant Client B
+    
+    Note over Client A,Server,Client B: Both clients generate same session ID
+    
+    Client A->>Server: SYN (Session ID: 12345, Endpoint: A)
+    Note right of Client A: Connection attempt with ID 12345
+    
+    Client B->>Server: SYN (Session ID: 12345, Endpoint: B)
+    Note left of Client B: Collision! Same session ID
+    
+    Note over Server: Session ID collision detected
+    Note over Server: Compare endpoints: A < B
+    Note over Server: Client A wins collision
+    
+    Server->>Client A: SYN-ACK (Session ID: 12345)
+    Note left of Server: Accept Client A's connection
+    
+    Server->>Client B: ERROR (Type 0x09)
+    Note left of Server: - Error: SESSION_ID_COLLISION<br/>- Collision detected<br/>- Retry with new ID
+    
+    Note over Client B: Generate new session ID
+    Client B->>Server: SYN (Session ID: 67890)
+    Note left of Client B: Retry with different ID
+    
+    Server->>Client B: SYN-ACK (Session ID: 67890)
+    Note left of Server: Accept retry connection
+    
+    Note over Client A,Server,Client B: Both connections established
+```
+
+### 16.2 HMAC Policy Negotiation and Escalation
+
+```mermaid
+sequenceDiagram
+    participant Peer A
+    participant Peer B
+    
+    Note over Peer A,Peer B: Initial connection with HMAC_LIGHT (32-bit)
+    
+    Peer A->>Peer B: DATA (Type 0x04, 32-bit HMAC)
+    Note right of Peer A: HMAC failure 1
+    
+    Note over Peer B: HMAC validation fails
+    Peer B->>Peer A: ERROR (Type 0x09)
+    Note left of Peer B: - Auth failure count: 1<br/>- Continue with HMAC_LIGHT
+    
+    Peer A->>Peer B: DATA (Type 0x04, 32-bit HMAC)
+    Note right of Peer A: HMAC failure 2
+    
+    Peer B->>Peer A: ERROR (Type 0x09)
+    Note left of Peer B: - Auth failure count: 2<br/>- Threshold approaching
+    
+    Peer A->>Peer B: DATA (Type 0x04, 32-bit HMAC)
+    Note right of Peer A: HMAC failure 3
+    
+    Note over Peer B: Authentication failure threshold exceeded
+    Note over Peer B: Escalate to HMAC_STRONG (64-bit)
+    
+    Peer B->>Peer A: CONTROL (Type 0x0C, Sub HMAC_POLICY_CHANGE)
+    Note left of Peer B: - Request HMAC escalation<br/>- New policy: HMAC_STRONG<br/>- Security enhancement
+    
+    Peer A->>Peer B: CONTROL (Type 0x0C, Sub HMAC_POLICY_ACK)
+    Note right of Peer A: - Acknowledge policy change<br/>- Switch to 64-bit HMAC
+    
+    Peer A->>Peer B: DATA (Type 0x04, 64-bit HMAC)
+    Note right of Peer A: First packet with stronger HMAC
+    
+    Peer B->>Peer A: ACK (Type 0x03)
+    Note left of Peer B: Authentication restored
+    
+    Note over Peer A,Peer B: Enhanced security with HMAC_STRONG
+```
+
+## 17. PSK Discovery Edge Cases
+
+### 17.1 PSK Discovery No Common Key Found
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Server
+    
+    Client->>Server: DISCOVERY_REQUEST (Type 0x0E, Sub 0x01)
+    Note right of Client: - Discovery ID<br/>- Bloom filter of client PSKs<br/>- Fingerprint count
+    
+    Note over Server: Test server PSKs against Bloom filter
+    Note over Server: No matches found in Bloom filter
+    
+    Server->>Client: DISCOVERY_RESPONSE (Type 0x0E, Sub 0x02)
+    Note left of Server: - Empty candidate list<br/>- Intersection status: NO_MATCHES<br/>- No shared PSKs available
+    
+    Note over Client: No compatible PSKs found
+    
+    Client->>Server: ERROR (Type 0x09)
+    Note right of Client: - Error: NO_COMMON_PSK<br/>- Connection impossible<br/>- Terminate discovery
+    
+    Note over Client,Server: Connection establishment failed
+    Note over Client,Server: Different PSK sets - no communication possible
+```
+
+### 17.2 PSK Enumeration Attack Detection
+
+```mermaid
+sequenceDiagram
+    participant Attacker
+    participant Server
+    
+    Note over Attacker: Attempts to enumerate PSKs
+    
+    Attacker->>Server: DISCOVERY_REQUEST (Type 0x0E, Sub 0x01)
+    Note right of Attacker: - Probe attempt 1<br/>- Minimal Bloom filter<br/>- Test specific PSK patterns
+    
+    Attacker->>Server: DISCOVERY_REQUEST (Type 0x0E, Sub 0x01)
+    Note right of Attacker: - Probe attempt 2<br/>- Different Bloom filter<br/>- Test different PSK patterns
+    
+    Attacker->>Server: DISCOVERY_REQUEST (Type 0x0E, Sub 0x01)
+    Note right of Attacker: - Probe attempt 3<br/>- Rapid successive attempts<br/>- Enumeration pattern
+    
+    Note over Server: Detect enumeration pattern
+    Note over Server: - Multiple requests from same source<br/>- Varying Bloom filter patterns<br/>- Rate exceeds threshold
+    
+    Server->>Attacker: ERROR (Type 0x09)
+    Note left of Server: - Error: RATE_LIMITED<br/>- Enumeration attack detected<br/>- 5 minute block duration
+    
+    Note over Server: Block source IP address
+    Note over Server: Log security violation
+    
+    Attacker->>Server: DISCOVERY_REQUEST (Type 0x0E, Sub 0x01)
+    Note right of Attacker: Continued enumeration attempt
+    
+    Note over Server: Source blocked - silently discard
+    
+    Note over Server: PSK enumeration attack mitigated
+```
+
+## 18. Advanced Fragment Management
+
+### 18.1 Fragment Bomb Attack Detection
+
+```mermaid
+sequenceDiagram
+    participant Attacker
+    participant Victim
+    
+    Note over Attacker: Attempts fragment bomb attack
+    
+    Attacker->>Victim: DATA (Fragment 0/999, ID 1000)
+    Note right of Attacker: Excessive fragment count
+    
+    Note over Victim: Validate fragment parameters
+    Note over Victim: total_fragments = 999 > MAX_FRAGMENTS (255)
+    
+    Victim->>Attacker: ERROR (Type 0x09)
+    Note left of Victim: - Error: FRAGMENT_BOMB_DETECTED<br/>- Excessive fragment count<br/>- Attack blocked
+    
+    Note over Victim: Log security violation
+    Note over Victim: Block source for 5 minutes
+    
+    Attacker->>Victim: DATA (Fragment 0/100, ID 1001)
+    Note right of Attacker: Second attack attempt
+    
+    Note over Victim: Source is blocked
+    Note over Victim: Silently discard packet
+    
+    Note over Victim: Fragment bomb attack mitigated
+```
+
+### 18.2 Selective Fragment Retransmission
+
+```mermaid
+sequenceDiagram
+    participant Sender
+    participant Receiver
+    
+    Sender->>Receiver: DATA (Fragment 0/5, ID 2000)
+    Sender->>X: DATA (Fragment 1/5, ID 2000)
+    Note over Sender,Receiver: Fragment 1 lost
+    Sender->>Receiver: DATA (Fragment 2/5, ID 2000)
+    Sender->>X: DATA (Fragment 3/5, ID 2000)
+    Note over Sender,Receiver: Fragment 3 lost
+    Sender->>Receiver: DATA (Fragment 4/5, ID 2000)
+    
+    Note over Receiver: Fragment timeout (30 seconds)
+    Note over Receiver: Missing fragments: 1, 3
+    
+    Receiver->>Sender: ERROR (Type 0x09)
+    Note left of Receiver: - Error: FRAGMENT_TIMEOUT<br/>- Fragment ID: 2000<br/>- Missing bitmap: 1010000
+    
+    Note over Sender: Parse missing fragment bitmap
+    Note over Sender: Identify fragments 1 and 3 needed
+    
+    Sender->>Receiver: DATA (Fragment 1/5, ID 2000)
+    Note right of Sender: Retransmit fragment 1 only
+    
+    Sender->>Receiver: DATA (Fragment 3/5, ID 2000)
+    Note right of Sender: Retransmit fragment 3 only
+    
+    Note over Receiver: All fragments received
+    Note over Receiver: Reassembly complete
+    
+    Receiver->>Sender: ACK (Type 0x03)
+    Note left of Receiver: Acknowledge complete message
+```
+
+## 19. Recovery Escalation and Exhaustion
+
+### 19.1 Complete Recovery Exhaustion Scenario
+
+```mermaid
+sequenceDiagram
+    participant Peer A
+    participant Peer B
+    
+    Note over Peer A,Peer B: Multiple connection issues
+    
+    Note over Peer A,Peer B: Recovery Level 1: Time Sync (Attempt 1/3)
+    Peer A->>Peer B: CONTROL (Time sync request)
+    Peer B->>X: Response lost
+    Note over Peer A: Timeout - attempt 1 failed
+    
+    Note over Peer A,Peer B: Recovery Level 1: Time Sync (Attempt 2/3)
+    Peer A->>Peer B: CONTROL (Time sync request)
+    Peer B->>Peer A: ERROR (Time sync failed)
+    Note over Peer A: Time sync failed - attempt 2 failed
+    
+    Note over Peer A,Peer B: Recovery Level 1: Time Sync (Attempt 3/3)
+    Peer A->>Peer B: CONTROL (Time sync request)
+    Peer B->>Peer A: ERROR (Time sync failed)
+    Note over Peer A: Level 1 exhausted - escalate
+    
+    Note over Peer A,Peer B: Recovery Level 2: Sequence Repair (Attempt 1/3)
+    Peer A->>Peer B: MANAGEMENT (Repair request)
+    Peer B->>Peer A: ERROR (Repair failed)
+    Note over Peer A: Repair failed - attempt 1 failed
+    
+    Note over Peer A,Peer B: Recovery Level 2: Sequence Repair (Attempt 2/3)
+    Peer A->>Peer B: MANAGEMENT (Repair request)
+    Peer B->>Peer A: ERROR (Repair failed)
+    Note over Peer A: Repair failed - attempt 2 failed
+    
+    Note over Peer A,Peer B: Recovery Level 2: Sequence Repair (Attempt 3/3)
+    Peer A->>Peer B: MANAGEMENT (Repair request)
+    Peer B->>Peer A: ERROR (Repair failed)
+    Note over Peer A: Level 2 exhausted - escalate
+    
+    Note over Peer A,Peer B: Recovery Level 3: ECDH Rekey (Attempt 1/3)
+    Peer A->>Peer B: MANAGEMENT (Rekey request)
+    Peer B->>Peer A: ERROR (Rekey failed)
+    Note over Peer A: Rekey failed - attempt 1 failed
+    
+    Note over Peer A,Peer B: Recovery Level 3: ECDH Rekey (Attempt 2/3)
+    Peer A->>Peer B: MANAGEMENT (Rekey request)
+    Peer B->>Peer A: ERROR (Rekey failed)
+    Note over Peer A: Rekey failed - attempt 2 failed
+    
+    Note over Peer A,Peer B: Recovery Level 3: ECDH Rekey (Attempt 3/3)
+    Peer A->>Peer B: MANAGEMENT (Rekey request)
+    Peer B->>Peer A: ERROR (Rekey failed)
+    Note over Peer A: All recovery levels exhausted
+    
+    Note over Peer A: Maximum recovery attempts reached
+    Note over Peer A: Connection unrecoverable
+    
+    Peer A->>Peer B: RST (Type 0x0B)
+    Note right of Peer A: - Reset reason: RECOVERY_EXHAUSTED<br/>- All recovery methods failed<br/>- Session terminated
+    
+    Note over Peer A,Peer B: Connection terminated
+    Note over Peer A,Peer B: New connection required
+```
+
+## 20. Sequence Number Management
+
+### 20.1 Sequence Number Wraparound Negotiation
+
+```mermaid
+sequenceDiagram
+    participant Peer A
+    participant Peer B
+    
+    Note over Peer A,Peer B: Sequence numbers approaching 32-bit limit
+    Note over Peer A: Current sequence: 4,294,960,000
+    Note over Peer B: Current sequence: 4,294,950,000
+    
+    Note over Peer A: Detect wraparound threshold
+    Note over Peer A: Sequence > 0x80000000 (2^31)
+    
+    Peer A->>Peer B: CONTROL (Type 0x0C, Sub SEQUENCE_NEG 0x04)
+    Note right of Peer A: - Wraparound negotiation request<br/>- Current sequence: 4,294,960,000<br/>- Request coordinated wraparound
+    
+    Note over Peer B: Check own sequence proximity
+    Note over Peer B: Also near wraparound threshold
+    
+    Peer B->>Peer A: CONTROL (Type 0x0C, Sub SEQUENCE_NEG 0x04)
+    Note left of Peer B: - Confirm wraparound readiness<br/>- Current sequence: 4,294,950,000<br/>- Ready for coordinated reset
+    
+    Note over Peer A,Peer B: Both peers ready for wraparound
+    Note over Peer A,Peer B: Coordinate reset at next time window boundary
+    
+    Note over Peer A,Peer B: Time window boundary reached
+    Note over Peer A: Reset sequence to 0
+    Note over Peer B: Reset sequence to 0
+    
+    Peer A->>Peer B: DATA (Type 0x04, Sequence: 0)
+    Note right of Peer A: First packet with wrapped sequence
+    
+    Peer B->>Peer A: ACK (Type 0x03, Ack: 1)
+    Note left of Peer B: Acknowledge wraparound successful
+    
+    Note over Peer A,Peer B: Sequence wraparound complete
+    Note over Peer A,Peer B: Continue with sequences starting from 0
 ```

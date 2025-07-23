@@ -39,6 +39,10 @@ session_state = {
     'state': CLOSED,
     'sub_state': NORMAL,
     'session_id': 0,
+    'session_id_length': SESSION_ID_32BIT,      // Negotiated session ID length
+    'timestamp_config': TIMESTAMP_24BIT,        // Negotiated timestamp configuration
+    'hmac_policy': HMAC_LIGHT,                  // Negotiated HMAC policy
+    'header_config': 0x71,                      // Version byte encoding (32-bit ID + 24-bit TS)
     'session_key': None,
     'daily_key': None,
     

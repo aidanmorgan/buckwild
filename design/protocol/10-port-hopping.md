@@ -39,37 +39,59 @@ The port hopping algorithm uses PBKDF2 derivation from ECDH shared secrets to en
 ### UTC-Based Time Windows
 
 ```pseudocode
-# Time windows are 500ms wide and based on UTC time from start of current day
-# This ensures synchronized port hopping across all peers regardless of timezone
+# Connection establishment uses 500ms buckets since UTC midnight for port calculation
+# Base port hopping (connection establishment) uses daily key + 500ms UTC time buckets
+# Session-specific port hopping uses ECDH-derived parameters + 500ms time buckets (month-based)
 # 
-# Time window calculation:
-# 1. Get current UTC time in milliseconds since epoch
-# 2. Calculate milliseconds since start of current UTC day
-# 3. Divide by 500ms to get current time window number
-# 4. Use time window number for port calculation
+# Base port calculation (connection establishment - simple algorithm):
+# 1. Derive daily key: HKDF-SHA256(PSK, date_salt, "daily_key" + UTC_date)
+# 2. Calculate 500ms time bucket: milliseconds_since_midnight_utc / 500 (integer division)
+# 3. Calculate port: HMAC-SHA256(daily_key, time_bucket || "base_port_sequence_v2")
+# 4. Map to port range: MIN_PORT + (hmac_result % port_range)
+# Note: No SYN packet HMAC needed - just 500ms time-bucket + daily key
 #
-# Example: If current UTC time is 14:30:25.123, then:
-# - Milliseconds since start of day = (14*3600 + 30*60 + 25)*1000 + 123 = 52225123ms
-# - Time window = 52225123 // 500 = 104450 (window number)
-# - Port will be calculated using this window number
+# Session port calculation (post-connection):
+# 1. Use ECDH-derived port_hop_seed from PBKDF2 chunks
+# 2. Combine with 500ms time bucket (month-based) for unique session sequence
+# 3. Apply session-specific port parameters
 
-function calculate_time_window(current_time_ms):
-    # Calculate time window number from UTC time
+function calculate_base_port_time_bucket(current_time_ms):
+    # Calculate 500ms time bucket from UTC midnight for base port hopping (connection establishment)
     ms_per_day = 24 * 60 * 60 * 1000  # 86400000 ms
-    ms_since_day_start = current_time_ms % ms_per_day
+    ms_since_midnight_utc = current_time_ms % ms_per_day
     
-    time_window = ms_since_day_start // HOP_INTERVAL_MS
-    return time_window
+    # 500ms buckets since midnight UTC for connection establishment
+    time_bucket = ms_since_midnight_utc // HOP_INTERVAL_MS  # From 02-core-definitions.md
+    return time_bucket
 
-function get_current_time_window():
-    # Get current time window for port calculation
+function calculate_session_time_bucket(current_time_ms):
+    # Calculate 500ms time bucket from month start for session packet hopping
+    month_start_utc = get_current_month_start_utc()
+    ms_since_month_start = current_time_ms - month_start_utc
+    
+    # 500ms buckets since month start UTC for session packets
+    time_bucket = ms_since_month_start // HOP_INTERVAL_MS  # From 02-core-definitions.md
+    return time_bucket
+
+function get_current_base_port_time_bucket():
+    # Get current 500ms time bucket for base port calculation (connection establishment)
     current_utc_ms = get_current_utc_time_ms()
-    return calculate_time_window(current_utc_ms)
+    return calculate_base_port_time_bucket(current_utc_ms)
 
-function get_synchronized_time_window():
-    # Get time window using synchronized time from time sync module
+function get_current_session_time_bucket():
+    # Get current 500ms time bucket for session port calculation
+    current_utc_ms = get_current_utc_time_ms()
+    return calculate_session_time_bucket(current_utc_ms)
+
+function get_synchronized_base_port_time_bucket():
+    # Get 500ms time bucket using synchronized time for base port hopping
     synchronized_time = get_synchronized_time()  # From time sync module
-    return calculate_time_window(synchronized_time)
+    return calculate_base_port_time_bucket(synchronized_time)
+
+function get_synchronized_session_time_bucket():
+    # Get 500ms time bucket using synchronized time for session port hopping
+    synchronized_time = get_synchronized_time()  # From time sync module
+    return calculate_session_time_bucket(synchronized_time)
 
 function calculate_next_hop_time():
     # Calculate exact time of next port hop
@@ -140,20 +162,37 @@ function derive_connection_offset_from_ecdh(shared_secret, client_pubkey, server
 ### Port Calculation Algorithm
 
 ```pseudocode
-function calculate_base_port_for_time_window(time_window):
-    # Calculate the base port for any given time window
-    # This algorithm is shared across all connections and provides the base sequence
+function calculate_base_port_for_time_bucket(daily_key, time_bucket):
+    # Calculate base port using daily key + time bucket for connection establishment
+    # Simple algorithm using time-bucket and daily key as requested by user
     
-    # Use deterministic but unpredictable function based on time window
-    time_bytes = time_window.to_bytes(8, 'big')
-    hash_result = SHA256(time_bytes || b"base_port_sequence_v2")
+    # Convert time bucket to bytes (8 bytes for consistency)
+    time_bucket_bytes = time_bucket.to_bytes(8, 'big')
     
-    # Extract port value from hash (use multiple hash outputs for better distribution)
-    port_value = bytes_to_uint32(hash_result[0:4])
+    # Use HMAC for balanced randomness/security vs calculation time
+    # This provides good randomness while being computationally efficient
+    hmac_result = HMAC_SHA256(daily_key, time_bucket_bytes || b"base_port_sequence_v2")
+    
+    # Extract port value from HMAC (use first 4 bytes for good distribution)
+    port_value = bytes_to_uint32(hmac_result[0:4])
     port_range = MAX_PORT - MIN_PORT + 1
     base_port = MIN_PORT + (port_value % port_range)
     
     return base_port
+
+function derive_daily_key(psk, current_utc_date):
+    # Derive daily key from PSK for base port hopping
+    # current_utc_date should be in YYYY-MM-DD format
+    
+    date_salt = SHA256(b"daily_key_salt" || current_utc_date.encode('utf-8'))
+    daily_key = HKDF_SHA256(
+        psk,                                           # Input key material
+        salt=date_salt,                                # Salt
+        info=b"daily_key" + current_utc_date.encode('utf-8'),  # Context info
+        length=32                                      # Output length (256 bits)
+    )
+    
+    return daily_key
 
 function calculate_port_for_time_window(port_params, time_window):
     # Calculate port using simplified algorithm - full port range available

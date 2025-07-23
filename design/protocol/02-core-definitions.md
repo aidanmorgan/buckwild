@@ -9,9 +9,11 @@ These constants establish the fundamental operational parameters that ensure con
 ### Core Protocol Constants
 
 ```pseudocode
-// Protocol structure constants
-OPTIMIZED_COMMON_HEADER_SIZE = 50        // Optimized header size in bytes (used in: packet-structure.md, fragmentation.md)
-FRAGMENT_HEADER_SIZE = 8                 // Fragment header size in bytes (used in: fragmentation.md)
+// Protocol version and header constants
+PROTOCOL_VERSION = 0x01                  // Current protocol version
+PROTOCOL_MAX_VERSION = 0x01              // Maximum supported protocol version
+BASE_HEADER_SIZE = 18                    // Minimum header size (version + type + sub-type + flags + seq + ack + payload_len)
+FRAGMENT_HEADER_SIZE = 8                 // Fragment header size in bytes (when fragmentation used)
 
 // Time-related constants  
 HOP_INTERVAL_MS = 500                    // Port hop interval in milliseconds (500ms time windows - used in: port-hopping.md, time-sync.md)
@@ -19,7 +21,8 @@ TIME_SYNC_TOLERANCE_MS = 50              // Maximum allowed clock drift (used in
 HEARTBEAT_INTERVAL_MS = 30000            // Heartbeat interval (30 seconds - used in: timeout-handling.md)
 HEARTBEAT_TIMEOUT_MS = 90000             // Heartbeat timeout (90 seconds - used in: timeout-handling.md)
 MAX_PACKET_LIFETIME_MS = 60000           // Maximum packet age (60 seconds - used in: timeout-handling.md)
-TIMESTAMP_WINDOW_MS = 30000              // Anti-replay timestamp window (used in: crypto.md)
+TIMESTAMP_WINDOW_MS = 30000              // Anti-replay timestamp window
+MONTH_TRANSITION_PREPARATION_MS = 3600000 // Start month transition prep 1 hour before
 SAFETY_MARGIN_MS = 100                   // Safety margin for delay calculations
 BASE_TRANSMISSION_DELAY_ALLOWANCE_MS = 1000 // Base allowance for network transmission delay
 ADAPTIVE_DELAY_WINDOW_MIN = 1            // Minimum delay window size (time windows - used in: delay-tuning.md)
@@ -145,6 +148,23 @@ FRAGMENT_REASSEMBLY_BUFFER_SIZE = 64    // Maximum fragments in reassembly buffe
 FRAGMENT_ID_SPACE = 0xFFFF              // Fragment ID space (16-bit)
 FRAGMENT_DUPLICATE_WINDOW = 100         // Window for detecting duplicate fragments
 
+// Session ID configuration
+SESSION_ID_16BIT = 0                    // 16-bit session ID (2 bytes, 65K sessions)
+SESSION_ID_32BIT = 1                    // 32-bit session ID (4 bytes, 4B sessions)  
+SESSION_ID_64BIT = 2                    // 64-bit session ID (8 bytes, unlimited)
+SESSION_ID_REUSE_QUEUE_SIZE = 1000      // Maximum IDs in reuse queue for 16-bit
+SESSION_ID_COLLISION_THRESHOLD = 100    // Alert threshold for collisions
+
+// Timestamp configuration  
+TIMESTAMP_16BIT = 0                     // 16-bit timestamp (2 bytes, 1.09 minutes)
+TIMESTAMP_24BIT = 1                     // 24-bit timestamp (3 bytes, 4.66 hours)
+TIMESTAMP_32BIT = 2                     // 32-bit timestamp (4 bytes, full month)
+
+// HMAC configuration
+HMAC_FULL = 0                          // 128-bit HMAC (16 bytes)
+HMAC_STRONG = 1                        // 64-bit HMAC (8 bytes)  
+HMAC_LIGHT = 2                         // 32-bit HMAC (4 bytes)
+
 // Flow control constants
 INITIAL_SEND_WINDOW = 8192              // Initial send window size (bytes)
 INITIAL_RECEIVE_WINDOW = 16384          // Initial receive window size (bytes)
@@ -164,9 +184,119 @@ DISCOVERY_RESPONDED = 2                 // Discovery response received, waiting 
 DISCOVERY_COMPLETED = 3                 // Discovery completed, PSK selected
 DISCOVERY_FAILED = 4                    // Discovery failed, no common PSK found
 
+// Packet type definitions (as defined in 03-packet-architecture.md)
+PACKET_TYPE_SYN = 0x01                  // Connection establishment
+PACKET_TYPE_SYN_ACK = 0x02              // Connection establishment response
+PACKET_TYPE_ACK = 0x03                  // Acknowledgment (includes WINDOW_UPDATE and SACK)
+PACKET_TYPE_DATA = 0x04                 // Data packet (includes FRAGMENT functionality)
+PACKET_TYPE_FIN = 0x05                  // Connection termination
+PACKET_TYPE_HEARTBEAT = 0x06            // Keep-alive packet
+PACKET_TYPE_ERROR = 0x09                // Error packet
+PACKET_TYPE_RST = 0x0B                  // Reset connection
+PACKET_TYPE_CONTROL = 0x0C              // Control operations (TIME_SYNC, RECOVERY, etc.)
+PACKET_TYPE_MANAGEMENT = 0x0D           // Management operations (REKEY, REPAIR)
+PACKET_TYPE_DISCOVERY = 0x0E            // PSK discovery with sub-types
+
+// Packet sub-type definitions (as defined in 03-packet-architecture.md)
+// CONTROL packet sub-types
+CONTROL_SUB_TIME_SYNC_REQUEST = 0x01    // Time synchronization request
+CONTROL_SUB_TIME_SYNC_RESPONSE = 0x02   // Time synchronization response
+CONTROL_SUB_RECOVERY = 0x03             // Session recovery
+CONTROL_SUB_SEQUENCE_NEG = 0x04         // Sequence number negotiation
+
+// MANAGEMENT packet sub-types
+MANAGEMENT_SUB_REKEY_REQUEST = 0x01     // Session key rotation request
+MANAGEMENT_SUB_REKEY_RESPONSE = 0x02    // Session key rotation response
+MANAGEMENT_SUB_REPAIR_REQUEST = 0x03    // Sequence repair request
+MANAGEMENT_SUB_REPAIR_RESPONSE = 0x04   // Sequence repair response
+
+// DISCOVERY packet sub-types
+DISCOVERY_SUB_REQUEST = 0x01            // PSK discovery request
+DISCOVERY_SUB_RESPONSE = 0x02           // PSK discovery response
+DISCOVERY_SUB_CONFIRM = 0x03            // PSK discovery confirmation
+
 // Protocol validation constants
-PACKET_TYPE_MAX = 0x0A                  // Maximum valid packet type value (used in: edge-case-handling.md)
-PROTOCOL_MAX_VERSION = 0x01             // Maximum supported protocol version (used in: edge-case-handling.md)
+PACKET_TYPE_MAX = 0x0E                  // Maximum valid packet type value (DISCOVERY = 0x0E)
+MAX_SESSION_ID_GENERATION_ATTEMPTS = 100 // Max attempts to generate unique ID
+SESSION_ID_CLEANUP_INTERVAL_MS = 3600000 // ID cleanup interval (1 hour)
+```
+
+## Utility Functions
+
+These utility functions are referenced throughout the protocol specification and must be implemented:
+
+```pseudocode
+// Time utility functions
+function get_current_utc_time_ms():
+    # Get current UTC time in milliseconds since Unix epoch
+    return current_utc_milliseconds
+
+function get_current_day_start_utc():
+    # Get UTC timestamp of start of current day (00:00:00.000 UTC)
+    current_time = get_current_utc_time_ms()
+    ms_per_day = 86400000  # 24 * 60 * 60 * 1000
+    return (current_time // ms_per_day) * ms_per_day
+
+function get_current_month_start_utc():
+    # Get UTC timestamp of start of current month (1st day, 00:00:00.000 UTC)
+    # Implementation must handle month/year boundaries correctly
+    current_time = get_current_utc_time_ms()
+    # Convert to date, set to 1st day of month, convert back
+    # This is implementation-specific but must return correct month boundary
+    return month_start_timestamp_utc
+
+// Byte conversion utility functions
+function bytes_to_uint16(bytes):
+    # Convert 2 bytes to 16-bit unsigned integer (big-endian)
+    if len(bytes) < 2:
+        return 0
+    return (bytes[0] << 8) | bytes[1]
+
+function bytes_to_uint32(bytes):
+    # Convert 4 bytes to 32-bit unsigned integer (big-endian)
+    if len(bytes) < 4:
+        return 0
+    return (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]
+
+function bytes_to_uint64(bytes):
+    # Convert 8 bytes to 64-bit unsigned integer (big-endian)
+    if len(bytes) < 8:
+        return 0
+    return ((bytes[0] << 56) | (bytes[1] << 48) | (bytes[2] << 40) | (bytes[3] << 32) |
+            (bytes[4] << 24) | (bytes[5] << 16) | (bytes[6] << 8) | bytes[7])
+
+function uint16_to_bytes(value):
+    # Convert 16-bit unsigned integer to 2 bytes (big-endian)
+    return [(value >> 8) & 0xFF, value & 0xFF]
+
+function uint32_to_bytes(value):
+    # Convert 32-bit unsigned integer to 4 bytes (big-endian)
+    return [(value >> 24) & 0xFF, (value >> 16) & 0xFF, 
+            (value >> 8) & 0xFF, value & 0xFF]
+
+function uint64_to_bytes(value):
+    # Convert 64-bit unsigned integer to 8 bytes (big-endian)
+    return [(value >> 56) & 0xFF, (value >> 48) & 0xFF, (value >> 40) & 0xFF, (value >> 32) & 0xFF,
+            (value >> 24) & 0xFF, (value >> 16) & 0xFF, (value >> 8) & 0xFF, value & 0xFF]
+
+// Memory security functions
+function secure_zero_memory(data):
+    # Securely zero memory to prevent data leakage
+    # Implementation must ensure compiler doesn't optimize away
+    # Use platform-specific secure memory zeroing (e.g., SecureZeroMemory, explicit_bzero)
+    secure_memory_zero(data, len(data))
+
+// Random number generation
+function get_secure_random_bytes(length):
+    # Generate cryptographically secure random bytes
+    # Must use platform cryptographic RNG (e.g., /dev/urandom, CryptGenRandom, etc.)
+    return cryptographic_random_bytes(length)
+
+// Hash utility function
+function hash_64bit(data):
+    # Generate 64-bit hash from arbitrary data
+    full_hash = SHA256(data)
+    return bytes_to_uint64(full_hash[0:8])
 ```
 
 The error code design follows a hierarchical structure where similar error types are grouped into ranges, making it easier to categorize and handle errors systematically.
