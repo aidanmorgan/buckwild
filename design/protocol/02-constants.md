@@ -18,7 +18,7 @@ These values have been carefully chosen based on network performance analysis, s
 
 ## Key Concepts
 
-- **Time Windows**: 250ms intervals that synchronize port hopping across all peers
+- **Time Windows**: 500ms intervals that synchronize port hopping across all peers
 - **Adaptive Parameters**: Constants that enable dynamic adjustment to network conditions
 - **Security Boundaries**: Timing and size limits that prevent attacks and ensure authenticity
 - **Performance Tuning**: Values optimized for throughput, latency, and resource utilization
@@ -32,7 +32,7 @@ OPTIMIZED_COMMON_HEADER_SIZE = 50        // Optimized header size in bytes (used
 FRAGMENT_HEADER_SIZE = 8                 // Fragment header size in bytes (used in: fragmentation.md)
 
 // Time-related constants  
-HOP_INTERVAL_MS = 250                    // Port hop interval in milliseconds (250ms time windows - used in: port-hopping.md, time-sync.md)
+HOP_INTERVAL_MS = 500                    // Port hop interval in milliseconds (500ms time windows - used in: port-hopping.md, time-sync.md)
 TIME_SYNC_TOLERANCE_MS = 50              // Maximum allowed clock drift (used in: time-sync.md)
 HEARTBEAT_INTERVAL_MS = 30000            // Heartbeat interval (30 seconds - used in: timeout-handling.md)
 HEARTBEAT_TIMEOUT_MS = 90000             // Heartbeat timeout (90 seconds - used in: timeout-handling.md)
@@ -49,16 +49,17 @@ BASE_HEARTBEAT_PAYLOAD_SIZE = 8          // Size of base heartbeat payload (byte
 MILLISECONDS_PER_DAY = 86400000          // Milliseconds in a day (for timestamp calculation)
 
 // Sequence and window constants
-SEQUENCE_NEGOTIATION_TIMEOUT_MS = 10000  // Sequence number negotiation timeout (used in: sequence-negotiation.md)
-SEQUENCE_COMMITMENT_SIZE = 32            // Size of sequence number commitment in bytes (used in: sequence-negotiation.md)
-SEQUENCE_NONCE_SIZE = 16                 // Size of sequence negotiation nonce in bytes (used in: sequence-negotiation.md)
-MAX_SEQUENCE_NUMBER = 0xFFFFFFFF         // Maximum sequence number (used in: sequence-negotiation.md)
-SEQUENCE_WRAP_THRESHOLD = 0x80000000     // Threshold for sequence wraparound (used in: sequence-negotiation.md)
+ECDH_KEY_EXCHANGE_TIMEOUT_MS = 10000     // ECDH connection establishment timeout (used in: packet-structure.md)
+SESSION_KEY_MATERIAL_SIZE = 128          // Size of master key material from PBKDF2 (1024 bits)
+CHUNK_SIZE = 2                           // Size of each 16-bit chunk in bytes
+MAX_CHUNKS_PER_DERIVATION = 64           // Maximum number of 16-bit chunks from key material
+MAX_SEQUENCE_NUMBER = 0xFFFFFFFF         // Maximum sequence number (used in: 12-psk-discovery.md)
+SEQUENCE_WRAP_THRESHOLD = 0x80000000     // Threshold for sequence wraparound (used in: 12-psk-discovery.md)
 SEQUENCE_WINDOW_SIZE = 1000              // Sequence number acceptance window (used in: recovery.md)
 INITIAL_CONGESTION_WINDOW = 1460         // Initial congestion window (bytes - used in: flow-control.md)
 MIN_CONGESTION_WINDOW = 292              // Minimum congestion window (bytes - used in: flow-control.md)
 MAX_CONGESTION_WINDOW = 65535            // Maximum congestion window (bytes - used in: flow-control.md)
-INITIAL_RECEIVE_WINDOW = 65535           // Initial receive window (bytes - used in: flow-control.md)
+// Initial receive window is defined in Flow control constants section below
 MAX_RECEIVE_WINDOW = 65535               // Maximum receive window (bytes)
 
 // Retransmission and timeout constants
@@ -106,9 +107,7 @@ SLOW_START_THRESHOLD = 65535             // Initial slow start threshold
 CONGESTION_AVOIDANCE_INCREMENT = 1       // Window increment in congestion avoidance
 FAST_RECOVERY_MULTIPLIER = 0.5          // Window reduction in fast recovery
 MSS = 1460                               // Maximum segment size in bytes
-MAX_CONGESTION_WINDOW = 65535            // Maximum congestion window size
-MIN_CONGESTION_WINDOW = 292              // Minimum congestion window size
-MAX_RECEIVE_WINDOW = 65535               // Maximum receive window size
+// Flow control constants are defined above - removing duplicates
 MIN_RECEIVE_WINDOW = 1024                // Minimum receive window size
 
 // Congestion control states
@@ -116,13 +115,39 @@ SLOW_START = 1                           // Slow start state
 CONGESTION_AVOIDANCE = 2                 // Congestion avoidance state
 FAST_RECOVERY = 3                        // Fast recovery state
 
-// Discovery and zero-knowledge proof constants
+// Discovery and privacy-preserving set intersection constants
 MAX_PSK_COUNT = 256                     // Maximum number of PSKs per peer
+MAX_PSK_PROOFS_PER_DISCOVERY = 8        // Maximum PSK proofs per discovery request (to limit packet size)
+PSK_PROOF_SIZE = 16                     // Size of PSK knowledge proof in bytes
 DISCOVERY_TIMEOUT_MS = 10000            // Discovery process timeout (10 seconds)
 DISCOVERY_RETRY_COUNT = 3               // Maximum discovery retry attempts
-PEDERSEN_COMMITMENT_SIZE = 64           // Size of Pedersen commitment in bytes
+DISCOVERY_CACHE_TTL_MS = 3600000        // Discovery cache time-to-live (1 hour)
 DISCOVERY_CHALLENGE_SIZE = 32           // Size of challenge nonce in bytes
 PSK_ID_LENGTH = 32                      // Length of PSK identifier
+
+// Privacy-preserving set intersection constants
+BLOOM_FILTER_SIZE_BITS_DEFAULT = 2048   // Default Bloom filter size in bits (256 bytes)
+BLOOM_FILTER_SIZE_BITS_MAX = 4096       // Maximum Bloom filter size in bits (512 bytes)
+BLOOM_FILTER_HASH_FUNCTIONS = 3         // Number of hash functions for Bloom filter
+BLOOM_FILTER_FALSE_POSITIVE_RATE = 0.01 // Target false positive rate (1%)
+PSI_CANDIDATE_HASH_SIZE = 32            // Size of candidate intersection hash (256-bit)
+PSI_MAX_CANDIDATES_PER_RESPONSE = 16    // Maximum candidates in response packet
+PSI_BLINDED_FINGERPRINT_SIZE = 16       // Size of blinded PSK fingerprint (128-bit)
+PSI_SESSION_SALT_SIZE = 4               // Size of PSI session salt (32-bit)
+
+// Elliptic curve constants (P-256)
+CURVE_P256_FIELD_SIZE = 32              // P-256 field element size in bytes
+CURVE_P256_SCALAR_SIZE = 32             // P-256 scalar size in bytes
+CURVE_P256_POINT_SIZE = 64              // P-256 uncompressed point size in bytes (x + y coordinates)
+CURVE_P256_COMPRESSED_SIZE = 33         // P-256 compressed point size (sign + x coordinate)
+
+// ECDH and PBKDF2 constants
+ECDH_SHARED_SECRET_SIZE = 32            // ECDH shared secret size in bytes (x-coordinate)
+PBKDF2_ITERATIONS_SESSION = 4096        // PBKDF2 iterations for session key derivation
+PBKDF2_ITERATIONS_SEQUENCE = 2048       // PBKDF2 iterations for sequence number derivation
+PBKDF2_ITERATIONS_PORT = 2048           // PBKDF2 iterations for port offset derivation
+KEY_EXCHANGE_TIMEOUT_MS = 10000         // ECDH key exchange timeout (10 seconds)
+SHARED_SECRET_VERIFY_SIZE = 32          // Size of shared secret verification hash
 FRAGMENT_TIMEOUT_MS = 30000             // Fragment reassembly timeout (30 seconds - used in: fragmentation.md, timeout-handling.md)
 BLOCK_DURATION_MS = 300000              // Block duration for enumeration attempts (5 minutes)
 REPLAY_THRESHOLD = 5                    // Threshold for replay attack detection
@@ -133,7 +158,6 @@ RECOVERY_RETRY_INTERVAL_MS = 2000       // Interval between recovery attempts
 RECOVERY_MAX_ATTEMPTS = 3               // Maximum recovery attempts before failure
 TIME_RESYNC_TIMEOUT_MS = 5000           // Time resynchronization timeout
 SEQUENCE_REPAIR_TIMEOUT_MS = 8000       // Sequence repair timeout
-EMERGENCY_RECOVERY_TIMEOUT_MS = 30000   // Emergency recovery timeout
 REKEY_TIMEOUT_MS = 10000                // Session rekey timeout
 
 // Fragmentation constants
@@ -150,10 +174,18 @@ WINDOW_UPDATE_THRESHOLD = 0.5           // Threshold for sending window updates 
 ZERO_WINDOW_PROBE_INTERVAL_MS = 5000    // Zero window probe interval
 WINDOW_TIMEOUT_MS = 60000               // Window timeout for flow control
 
+// Recovery mechanism constants
+MAX_REPAIR_WINDOW_SIZE = 1000           // Maximum repair window size (packets)
+MAX_WINDOW_SIZE = 65535                 // Maximum flow control window size
+
 // Discovery states
 DISCOVERY_IDLE = 0                      // No discovery in progress
 DISCOVERY_INITIATED = 1                 // Discovery initiated, waiting for response
 DISCOVERY_RESPONDED = 2                 // Discovery response received, waiting for confirmation
 DISCOVERY_COMPLETED = 3                 // Discovery completed, PSK selected
 DISCOVERY_FAILED = 4                    // Discovery failed, no common PSK found
+
+// Protocol validation constants
+PACKET_TYPE_MAX = 0x0A                  // Maximum valid packet type value (used in: edge-case-handling.md)
+PROTOCOL_MAX_VERSION = 0x01             // Maximum supported protocol version (used in: edge-case-handling.md)
 ```

@@ -83,7 +83,7 @@ function get_current_port_with_adaptive_delay_allowance(daily_key, session_id, s
     
     for offset in range(start_offset, end_offset + 1):
         time_window = current_time_window + offset
-        port = calculate_port_with_offset(daily_key, session_id, time_window, src_endpoint, dst_endpoint, connection_id)
+        port = calculate_port_with_ecdh_offset(session_keys, time_window, session_id)
         ports.append(port)
     
     return ports

@@ -26,13 +26,9 @@ The RTO calculation algorithm balances quick loss detection with avoiding spurio
 
 ## Timeout Constants
 ```pseudocode
-// Time-related constants
-HOP_INTERVAL_MS = 250                    // Port hop interval in milliseconds (250ms time windows)
-TIME_SYNC_TOLERANCE_MS = 50              // Maximum allowed clock drift
-HEARTBEAT_INTERVAL_MS = 30000            // Heartbeat interval (30 seconds)
-HEARTBEAT_TIMEOUT_MS = 90000             // Heartbeat timeout (90 seconds)
-MAX_PACKET_LIFETIME_MS = 60000           // Maximum packet age (60 seconds)
-TIMESTAMP_WINDOW_MS = 30000              // Anti-replay timestamp window
+// Time-related constants - main definitions are in 02-constants.md
+// The following constants are duplicated here for reference:
+// HOP_INTERVAL_MS, TIME_SYNC_TOLERANCE_MS, HEARTBEAT_INTERVAL_MS, etc.
 SAFETY_MARGIN_MS = 100                   // Safety margin for delay calculations
 BASE_TRANSMISSION_DELAY_ALLOWANCE_MS = 1000 // Base allowance for network transmission delay
 
@@ -60,12 +56,9 @@ RTT_MAX_MS = 60000                       // Maximum RTT
 DISCOVERY_TIMEOUT_MS = 10000            // Discovery process timeout (10 seconds)
 FRAGMENT_TIMEOUT_MS = 30000             // Fragment reassembly timeout (30 seconds)
 
-// Recovery timeout constants
-RECOVERY_TIMEOUT_MS = 15000             // Recovery process timeout (15 seconds)
+// Recovery timeout constants - main definitions are in 02-constants.md
 TIME_RESYNC_TIMEOUT_MS = 5000           // Time resynchronization timeout
 SEQUENCE_REPAIR_TIMEOUT_MS = 8000       // Sequence repair timeout
-EMERGENCY_RECOVERY_TIMEOUT_MS = 30000   // Emergency recovery timeout
-REKEY_TIMEOUT_MS = 10000                // Session rekey timeout
 
 // Flow control timeouts
 ZERO_WINDOW_PROBE_INTERVAL_MS = 5000    // Zero window probe interval

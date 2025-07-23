@@ -73,37 +73,49 @@ sequenceDiagram
     Note over Client,Server: Connection Established with Negotiated PSK
 ```
 
-### 1.3 Connection Establishment with Sequence Negotiation
+### 1.3 Connection Establishment with ECDH Key Exchange
 
 ```mermaid
 sequenceDiagram
     participant Client
     participant Server
     
-    Note over Client,Server: Phase 1: Sequence Commitment
-    Client->>Server: CONTROL (Type 0x0C, Sub SEQUENCE_NEG 0x06)
-    Note right of Client: - Phase: COMMIT<br/>- Sequence commitment<br/>- Challenge nonce
-    
-    Server->>Client: CONTROL (Type 0x0C, Sub SEQUENCE_NEG 0x06)
-    Note left of Server: - Phase: COMMIT<br/>- Server sequence commitment<br/>- Response nonce
-    
-    Note over Client,Server: Phase 2: Sequence Reveal
-    Client->>Server: CONTROL (Type 0x0C, Sub SEQUENCE_NEG 0x06)
-    Note right of Client: - Phase: REVEAL<br/>- Actual sequence number<br/>- Proof of commitment
-    
-    Server->>Client: CONTROL (Type 0x0C, Sub SEQUENCE_NEG 0x06)
-    Note left of Server: - Phase: REVEAL<br/>- Server sequence number<br/>- Validation proof
-    
-    Note over Client,Server: Phase 3: Confirmation
-    Client->>Server: CONTROL (Type 0x0C, Sub SEQUENCE_NEG 0x06)
-    Note right of Client: - Phase: CONFIRM<br/>- Final confirmation<br/>- Ready for handshake
-    
-    Note over Client,Server: Phase 4: Standard Handshake
+    Note over Client,Server: Phase 1: ECDH Handshake with PSK Authentication
     Client->>Server: SYN (Type 0x01)
-    Server->>Client: SYN-ACK (Type 0x02)
-    Client->>Server: ACK (Type 0x03)
+    Note right of Client: - Client ECDH Public Key<br/>- PSK Authentication<br/>- Key Exchange ID
     
-    Note over Client,Server: Connection with Negotiated Sequences
+    Server->>Client: SYN-ACK (Type 0x02)
+    Note left of Server: - Server ECDH Public Key<br/>- Shared Secret Verification Hash<br/>- Echo Key Exchange ID
+    
+    Client->>Server: ACK (Type 0x03)
+    Note right of Client: - Connection Complete<br/>- Both peers derive identical:<br/>  • Sequence numbers (PBKDF2)<br/>  • Port offsets (PBKDF2)<br/>  • Session keys (PBKDF2)
+    
+    Note over Client,Server: Connection with ECDH-Derived Parameters
+```
+
+### 1.4 Privacy-Preserving PSK Discovery
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Server
+    
+    Note over Client,Server: Phase 1: PSI Discovery Request
+    Client->>Server: DISCOVERY (Type 0x0E, Sub REQUEST 0x01)
+    Note right of Client: - Discovery ID + Session Salt<br/>- Bloom Filter (blinded PSK fingerprints)<br/>- Fingerprint count
+    
+    Note over Client,Server: Phase 2: Intersection Response
+    Server->>Client: DISCOVERY (Type 0x0E, Sub RESPONSE 0x02)
+    Note left of Server: - Candidate intersection hashes<br/>- Intersection status<br/>- (Server tests PSKs against Bloom filter)
+    
+    Note over Client,Server: Phase 3: PSK Selection Confirmation
+    Client->>Server: DISCOVERY (Type 0x0E, Sub CONFIRM 0x03)
+    Note right of Client: - Selected PSK confirmation hash<br/>- (Client verifies candidates)
+    
+    Server->>Client: DISCOVERY (Type 0x0E, Sub CONFIRM 0x03)
+    Note left of Server: - Final confirmation status<br/>- PSK discovery complete
+    
+    Note over Client,Server: Proceed to ECDH Connection Establishment
 ```
 
 ## 2. Data Transmission Flows
@@ -190,7 +202,7 @@ sequenceDiagram
     Peer A->>Peer B: DATA (via port 5432)
     Peer B->>Peer A: ACK (via port 5432)
     
-    Note over Peer A,Peer B: 250ms Time Window Boundary
+    Note over Peer A,Peer B: 500ms Time Window Boundary
     Note over Peer A,Peer B: Both peers calculate new port
     Note over Peer A,Peer B: Time Window N+1 (Port 7891)
     
@@ -292,7 +304,7 @@ sequenceDiagram
     Note left of Peer B: Confirms new key works
 ```
 
-### 4.4 Emergency Recovery
+### 4.4 Connection Termination on Recovery Failure
 
 ```mermaid
 sequenceDiagram
@@ -300,22 +312,16 @@ sequenceDiagram
     participant Peer B
     
     Note over Peer A,Peer B: Multiple recovery attempts failed
-    Note over Peer A: Initiates emergency recovery
+    Note over Peer A: Initiates connection termination
     
-    Peer A->>Peer B: CONTROL (Type 0x0C, Sub EMERGENCY_REQUEST 0x04)
-    Note right of Peer A: - Emergency session ID<br/>- Encrypted recovery data<br/>- PSK-derived emergency key
+    Peer A->>Peer B: RST (Type 0x0B)
+    Note right of Peer A: - Termination reason<br/>- Final sequence number
     
-    Note over Peer B: Validates using PSK
-    Peer B->>Peer A: CONTROL (Type 0x0C, Sub EMERGENCY_RESPONSE 0x05)
-    Note left of Peer B: - Recovery confirmation<br/>- New session parameters<br/>- Emergency validation
+    Note over Peer B: Acknowledges termination
+    Peer B->>Peer A: RST (Type 0x0B)
+    Note left of Peer B: - Confirms termination<br/>- Connection closed
     
-    Peer A->>Peer B: CONTROL (Type 0x0C, Sub EMERGENCY_VERIFY 0x07)
-    Note right of Peer A: - Test data<br/>- Expected HMAC<br/>- Key verification
-    
-    Peer B->>Peer A: ACK (Type 0x03)
-    Note left of Peer B: Confirms emergency recovery
-    
-    Note over Peer A,Peer B: Session fully recovered
+    Note over Peer A,Peer B: Connection terminated<br/>Must re-establish to continue
 ```
 
 ## 5. Connection Termination
@@ -999,9 +1005,9 @@ These comprehensive sequence diagrams illustrate the complete range of protocol 
 4. **Connection Termination** - Graceful FIN-based shutdown and forceful RST-based termination
 
 ### **Recovery and Error Handling:**
-5. **Recovery Scenarios** - Time resync, sequence repair, session rekeying, and emergency recovery procedures
+5. **Recovery Scenarios** - Time resync, sequence repair, session rekeying, and connection termination on failure
 6. **Error Handling** - Authentication failures, protocol errors, and systematic recovery responses
-7. **Complete Recovery Escalation** - Full chain from time sync through emergency recovery, including exhaustion scenarios
+7. **Complete Recovery Escalation** - Full chain from time sync through connection termination, including failure scenarios
 
 ### **Advanced Protocol Features:**
 8. **PSK Discovery Failures** - Timeout handling, enumeration attack detection, and no-common-key scenarios

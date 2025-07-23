@@ -22,10 +22,10 @@ A. [Sequence Diagrams](A-sequence-diagrams.md) - Visual flow diagrams of all pro
 6. [Flow Control](06-flow-control.md) - Flow/congestion window handling
 7. [Timeout Handling](07-timeout-handling.md) - Timed events, retries, RTO behavior
 8. [Fragmentation](08-fragmentation.md) - Fragmentation mechanics and reassembly logic
-9. [Cryptography](09-crypto.md) - HMACs, HKDF derivation, session rekeying
+9. [Cryptography](09-crypto.md) - ECDH key exchange, PBKDF2 derivation, HMAC authentication
 10. [Port Hopping](10-port-hopping.md) - Port calculation and synchronization pseudocode
 11. [Recovery](11-recovery.md) - Resync, rekey, repair, emergency recovery flows
-12. [Sequence Negotiation](12-sequence-negotiation.md) - Zero-knowledge negotiation mechanics
+12. [Sequence Derivation](12-psk-discovery.md) - ECDH-based sequence number and port derivation mechanics
 13. [Delay Tuning](13-delay-tuning.md) - Adaptive delay, measurement, heartbeat payloads
 14. [Time Synchronization](14-time-sync.md) - Time offset application and coordination helpers
 

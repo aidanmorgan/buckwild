@@ -35,9 +35,9 @@ MAX_FRAGMENTS = 255                      // Maximum fragments per packet
 // Fragmentation constants
 MAX_FRAGMENT_SIZE = 1400                // Maximum fragment payload size (bytes)
 FRAGMENT_REASSEMBLY_BUFFER_SIZE = 64    // Maximum fragments in reassembly buffer
-FRAGMENT_ID_SPACE = 0xFFFF              // Fragment ID space (16-bit)
+// Fragment ID space constant is defined in 02-constants.md
 FRAGMENT_DUPLICATE_WINDOW = 100         // Window for detecting duplicate fragments
-FRAGMENT_TIMEOUT_MS = 30000             // Fragment reassembly timeout (30 seconds)
+// Fragment timeout constant is defined in 02-constants.md
 ```
 
 ## Packet Type Definition
@@ -46,29 +46,14 @@ FRAGMENT_TIMEOUT_MS = 30000             // Fragment reassembly timeout (30 secon
 // Fragmentation now integrated into DATA packets (Type 0x04) using header fields
 ```
 
-## Common Header Fragment Fields
+## Fragment Implementation Approach
+
+**IMPORTANT**: Fragmentation is implemented using DATA packets (Type 0x04) with fragment information encoded in the packet payload, **not** as a separate packet type. This approach provides better efficiency and maintains compatibility with the existing packet structure.
+
+## DATA Packet with Fragment Fields
 
 ```pseudocode
-Common Header Structure (Big-Endian):
-+-----------------------------------+
-|      Timestamp (32-bit)          |
-+-----------------------------------+
-|    Window Size     | Fragment ID |
-+-------------------+---------------+
-|  Fragment Index   | Total Frags  |
-+-------------------+---------------+
-
-Field Definitions:
-- Window Size (16-bit): Available receive window size (big-endian)
-- Fragment ID (16-bit): Unique fragment identifier (big-endian)
-- Fragment Index (16-bit): Fragment position (0-based, big-endian)
-- Total Frags (16-bit): Total number of fragments (big-endian)
-```
-
-## FRAGMENT Packet Structure
-
-```pseudocode
-FRAGMENT Packet Structure (Big-Endian):
+DATA Packet Structure for Fragmented Data (Big-Endian):
 +-----------------------------------+
 |      Optimized Common Header      |
 |           (50 bytes)             |
@@ -84,14 +69,16 @@ FRAGMENT Packet Structure (Big-Endian):
 +-----------------------------------+
 
 Field Definitions:
-- Optimized Common Header (50 bytes): Standard header with PSH flag set
-- Fragment ID (16-bit): Unique fragment identifier
+- Optimized Common Header (50 bytes): Standard DATA packet header (Type 0x04)
+- Fragment ID (16-bit): Unique fragment identifier within session
 - Fragment Index (16-bit): Fragment position (0-based)
-- Total Fragments (16-bit): Total number of fragments
+- Total Fragments (16-bit): Total number of fragments for this message
 - Fragment Data (Variable Length): Fragment payload
 
-Total FRAGMENT Packet Size: 50 + 6 + fragment_data_length bytes
+Total Fragmented DATA Packet Size: 50 + 6 + fragment_data_length bytes
 ```
+
+**Non-fragmented DATA packets**: When data fits in a single packet, no fragment header is included and the payload contains the complete data.
 
 ## Fragment Reassembly Algorithm
 
@@ -101,16 +88,16 @@ function handle_fragment_packet(fragment_packet):
     fragment_index = fragment_packet.fragment_index
     total_fragments = fragment_packet.total_fragments
     
-    # Initialize fragment buffer if needed
-    if fragment_id not in fragment_buffers:
-        fragment_buffers[fragment_id] = {
+    # Initialize reassembly buffer if needed
+    if fragment_id not in reassembly_buffers:
+        reassembly_buffers[fragment_id] = {
             'fragments': [None] * total_fragments,
             'total_fragments': total_fragments,
             'received_count': 0,
             'timer': current_time + FRAGMENT_TIMEOUT_MS
         }
     
-    buffer = fragment_buffers[fragment_id]
+    buffer = reassembly_buffers[fragment_id]
     
     # Store fragment
     if fragment_index < total_fragments and buffer['fragments'][fragment_index] is None:
@@ -121,7 +108,7 @@ function handle_fragment_packet(fragment_packet):
         if buffer['received_count'] == total_fragments:
             reassembled_data = reassemble_fragments(buffer['fragments'])
             deliver_to_application(reassembled_data)
-            del fragment_buffers[fragment_id]
+            del reassembly_buffers[fragment_id]
         else:
             # Extend timer
             buffer['timer'] = current_time + FRAGMENT_TIMEOUT_MS
@@ -142,12 +129,12 @@ function cleanup_expired_fragments():
     current_time = get_current_time()
     expired_fragments = []
     
-    for fragment_id, buffer in fragment_buffers.items():
+    for fragment_id, buffer in reassembly_buffers.items():
         if current_time > buffer['timer']:
             expired_fragments.append(fragment_id)
     
     for fragment_id in expired_fragments:
-        del fragment_buffers[fragment_id]
+        del reassembly_buffers[fragment_id]
 ```
 
 ## Fragmentation Overview

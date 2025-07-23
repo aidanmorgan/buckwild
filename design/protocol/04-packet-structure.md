@@ -43,10 +43,7 @@ PACKET_TYPE_DISCOVERY = 0x0E            // PSK discovery with sub-types
 CONTROL_SUB_TIME_SYNC_REQUEST = 0x01    // Time synchronization request
 CONTROL_SUB_TIME_SYNC_RESPONSE = 0x02   // Time synchronization response
 CONTROL_SUB_RECOVERY = 0x03             // Session recovery
-CONTROL_SUB_EMERGENCY_REQUEST = 0x04    // Emergency recovery request
-CONTROL_SUB_EMERGENCY_RESPONSE = 0x05   // Emergency recovery response
-CONTROL_SUB_SEQUENCE_NEG = 0x06         // Sequence number negotiation
-CONTROL_SUB_EMERGENCY_VERIFY = 0x07     // Emergency recovery verification
+CONTROL_SUB_SEQUENCE_NEG = 0x04         // Sequence number negotiation
 
 // MANAGEMENT packet sub-types
 MANAGEMENT_SUB_REKEY_REQUEST = 0x01     // Session key rotation request
@@ -152,11 +149,11 @@ Used in: ACK packets when selective acknowledgment needed
 **Purpose**: Initiates a new connection between peers and establishes the initial protocol parameters.
 
 **Why it exists**: The SYN packet serves as the first step in the three-way handshake, allowing peers to:
-- Negotiate initial sequence numbers using zero-knowledge commitments for security
+- Establish ephemeral Diffie-Hellman key exchange for forward secrecy
 - Exchange supported protocol features and capabilities
 - Establish initial flow control windows
 - Synchronize time offsets for port hopping coordination
-- Begin the secure session establishment process
+- Derive initial sequence numbers and port offsets from shared DH secret using PBKDF2
 
 **When used**: Sent by the client to initiate a new connection to a server.
 
@@ -166,28 +163,41 @@ SYN Packet Structure (Big-Endian):
 |      Optimized Common Header      |
 |           (50 bytes)             |
 +-----------------------------------+
-|   Sequence Commitment (32-bit)   |
+|    Client ECDH Public Key        |
+|         (P-256 Point)            |
+|           (64 bytes)             |
+|                                 |
+|                                 |
+|                                 |
+|                                 |
 +-----------------------------------+
-| Initial Congestion|Initial Receive|
-|     Window        |    Window     |
-+-------------------+---------------+
-|      Time Offset (32-bit)        |
+|       PSK Authentication         |
+|           (16 bytes)             |
+|                                 |
 +-----------------------------------+
+|  Key Exchange  | Initial Congestion|
+|     ID         |    Window         |
++----------------+-------------------+
+| Initial Receive|   Time Offset     |
+|     Window     |    (32-bit)       |
++----------------+-------------------+
 |    Supported Features (16-bit)   |
 +-----------------------------------+
-|   Sequence Nonce (16-bit)        |
+|       Reserved (16-bit)          |
 +-----------------------------------+
 
 Field Definitions:
 - Optimized Common Header (50 bytes): Standard header with SYN flag set
-- Sequence Commitment (32-bit): Zero-knowledge commitment to initial sequence number (4 bytes)
+- Client ECDH Public Key (64 bytes): P-256 public key for key exchange (64 bytes)
+- PSK Authentication (16 bytes): HMAC of public key with PSK (16 bytes)
+- Key Exchange ID (16-bit): Unique identifier for this key exchange (2 bytes)
 - Initial Congestion Window (16-bit): Initial congestion window size (2 bytes)
 - Initial Receive Window (16-bit): Initial receive window size (2 bytes)
 - Time Offset (32-bit): Client's time offset from epoch (4 bytes)
 - Supported Features (16-bit): Bitmap of supported features (2 bytes)
-- Sequence Nonce (16-bit): Nonce for sequence number commitment (2 bytes)
+- Reserved (16-bit): Always 0x0000 (2 bytes)
 
-Total SYN Packet Size: 50 + 18 = 68 bytes
+Total SYN Packet Size: 50 + 108 = 158 bytes
 ```
 
 ### SYN-ACK Packet (Type 0x02)
@@ -195,11 +205,12 @@ Total SYN Packet Size: 50 + 18 = 68 bytes
 **Purpose**: Responds to a SYN packet, acknowledging the connection request and providing server-side parameters.
 
 **Why it exists**: The SYN-ACK packet completes the server side of the three-way handshake by:
-- Acknowledging the client's SYN and sequence commitment
-- Providing the server's own sequence commitment and parameters
-- Validating the client's sequence number using zero-knowledge proofs
+- Acknowledging the client's SYN and ECDH public key
+- Providing the server's ephemeral ECDH public key
+- Completing the Diffie-Hellman key exchange for session key derivation
 - Negotiating final protocol features and capabilities
 - Establishing mutual time synchronization and flow control windows
+- Enabling both peers to derive identical sequence numbers and port offsets from shared DH secret
 
 **When used**: Sent by the server in response to a valid SYN packet from a client.
 
@@ -209,31 +220,42 @@ SYN-ACK Packet Structure (Big-Endian):
 |      Optimized Common Header      |
 |           (50 bytes)             |
 +-----------------------------------+
-|   Sequence Commitment (32-bit)   |
+|    Server ECDH Public Key        |
+|         (P-256 Point)            |
+|           (64 bytes)             |
+|                                 |
+|                                 |
+|                                 |
+|                                 |
 +-----------------------------------+
-|   Sequence Proof (32-bit)        |
+|  Shared Secret Verification Hash |
+|         (SHA256 Hash)            |
+|        (32 bytes)                |
+|                                 |
 +-----------------------------------+
-| Initial Congestion|Initial Receive|
-|     Window        |    Window     |
-+-------------------+---------------+
-|      Time Offset (32-bit)        |
-+-----------------------------------+
+|  Key Exchange  | Initial Congestion|
+|    ID Echo     |    Window         |
++----------------+-------------------+
+| Initial Receive|   Time Offset     |
+|     Window     |    (32-bit)       |
++----------------+-------------------+
 |   Negotiated Features (16-bit)   |
 +-----------------------------------+
-|   Sequence Nonce (16-bit)        |
+|       Reserved (16-bit)          |
 +-----------------------------------+
 
 Field Definitions:
 - Optimized Common Header (50 bytes): Standard header with SYN and ACK flags set
-- Sequence Commitment (32-bit): Zero-knowledge commitment to server's initial sequence number (4 bytes)
-- Sequence Proof (32-bit): Zero-knowledge proof validating client's sequence commitment (4 bytes)
+- Server ECDH Public Key (64 bytes): P-256 public key for key exchange (64 bytes)
+- Shared Secret Verification Hash (32 bytes): SHA256 hash of computed shared secret (32 bytes)
+- Key Exchange ID Echo (16-bit): Echo of client's key exchange ID (2 bytes)
 - Initial Congestion Window (16-bit): Initial congestion window size (2 bytes)
 - Initial Receive Window (16-bit): Initial receive window size (2 bytes)
 - Time Offset (32-bit): Server's time offset from epoch (4 bytes)
 - Negotiated Features (16-bit): Final feature bitmap (2 bytes)
-- Sequence Nonce (16-bit): Nonce for server's sequence number commitment (2 bytes)
+- Reserved (16-bit): Always 0x0000 (2 bytes)
 
-Total SYN-ACK Packet Size: 50 + 22 = 72 bytes
+Total SYN-ACK Packet Size: 50 + 124 = 174 bytes
 ```
 
 ### ACK Packet (Type 0x03)
@@ -453,16 +475,15 @@ Total ERROR Packet Size: 50 + 4 + error_message_length bytes
 
 ### CONTROL Packet (Type 0x0C)
 
-**Purpose**: Handles various control operations including time synchronization, session recovery, and emergency procedures.
+**Purpose**: Handles various control operations including time synchronization and session recovery.
 
 **Why it exists**: The CONTROL packet consolidates multiple control functions into a single packet type for efficiency:
 - Provides time synchronization for coordinated port hopping between peers
-- Enables enhanced session recovery with detailed state information
-- Supports emergency recovery procedures with cryptographic verification
+- Enables session recovery with detailed state information
 - Handles sequence number negotiation for secure connection establishment
 - Replaces multiple legacy packet types with a unified, extensible control framework
 
-**When used**: Sent for time synchronization, session recovery operations, emergency procedures, and sequence negotiations.
+**When used**: Sent for time synchronization, session recovery operations, and sequence negotiations.
 
 ```pseudocode
 CONTROL Packet Structure (Big-Endian):
@@ -511,6 +532,46 @@ RECOVERY (Sub-Type 0x03):
 |     (8-bit)      |   (24-bit)   |
 +-------------------+---------------+
 Total: 50 + 16 = 66 bytes
+
+EMERGENCY_REQUEST (Sub-Type 0x04):
++-----------------------------------+
+|    Emergency Token (32-bit)      |
++-----------------------------------+
+|  Emergency Session ID (64-bit)   |
+|                                 |
++-----------------------------------+
+|    Recovery Reason (8-bit)       |
++-----------------------------------+
+|   Emergency Data Length (16-bit) |
++-----------------------------------+
+|      PSK Fingerprint (64-bit)    |
+|                                 |
++-----------------------------------+
+|    Encrypted Recovery Data       |
+|        (Variable Length)         |
+|      (up to 128 bytes)           |
++-----------------------------------+
+Total: 50 + 23 + encrypted_data_length bytes (max 201 bytes)
+
+EMERGENCY_RESPONSE (Sub-Type 0x05):
++-----------------------------------+
+|    Emergency Token (32-bit)      |
++-----------------------------------+
+|  Emergency Session ID (64-bit)   |
+|                                 |
++-----------------------------------+
+|   Recovery Status (8-bit)        |
++-----------------------------------+
+|   New Session Parameters (64-bit)|
+|                                 |
++-----------------------------------+
+|   Recovery Confirmation (128-bit)|
+|                                 |
+|                                 |
++-----------------------------------+
+|        Reserved (32-bit)         |
++-----------------------------------+
+Total: 50 + 35 = 85 bytes
 
 SEQUENCE_NEG (Sub-Type 0x06):
 +-----------------------------------+
@@ -651,12 +712,13 @@ Total: 50 + 16 = 66 bytes
 
 **Purpose**: Handles pre-shared key (PSK) discovery and selection for secure connection establishment.
 
-**Why it exists**: The DISCOVERY packet enables secure key discovery in environments with multiple PSKs:
-- Allows peers to identify which PSK to use without exposing key material
-- Provides cryptographic commitments to prevent key enumeration attacks
-- Supports multiple PSK environments with secure selection mechanisms
-- Consolidates discovery phases into sub-types for efficient protocol flow
-- Enables secure PSK negotiation while maintaining zero-knowledge properties
+**Why it exists**: The DISCOVERY packet enables privacy-preserving PSK discovery using hash-based set intersection:
+- Uses Bloom filters and blinded fingerprints to find common PSKs without revealing non-shared keys
+- Implements privacy-preserving set intersection to protect PSK fingerprint collections
+- Prevents PSK enumeration attacks through cryptographic blinding and hash-based representations
+- Supports environments where both peers maintain large collections of PSK fingerprints
+- Enables efficient discovery through probabilistic data structures (Bloom filters)
+- Provides strong privacy guarantees - only intersection results are revealed, not full sets
 
 **When used**: Sent during connection establishment when PSK discovery is required to identify the correct shared key.
 
@@ -677,47 +739,51 @@ DISCOVERY_REQUEST (Sub-Type 0x01):
 +-----------------------------------+
 |        Discovery ID (64-bit)     |
 +-----------------------------------+
-|    PSK Count     |Challenge Nonce|
-|    (16-bit)      |   (64-bit)   |
+|       Session Salt (32-bit)      |
++-----------------------------------+
+| Fingerprint Count|Bloom Filter   |
+|     (16-bit)     | Size (16-bit) |
 +-------------------+---------------+
 | Initiator Features|   Reserved   |
 |    (16-bit)      |   (16-bit)   |
 +-------------------+---------------+
-|        Commitment (128-bit)       |
-|                                 |
+|     Bloom Filter Data            |
+|     (Variable Length)            |
+|    (512 bytes maximum)           |
 +-----------------------------------+
-Total: 50 + 36 = 86 bytes
+Total: 50 + 20 + bloom_filter_size bytes (max 582 bytes)
 
 DISCOVERY_RESPONSE (Sub-Type 0x02):
 +-----------------------------------+
 |        Discovery ID (64-bit)     |
 +-----------------------------------+
-|    PSK Count     |Challenge Nonce|
-|    (16-bit)      |   (64-bit)   |
-+-------------------+---------------+
-|        Response Nonce (64-bit)    |
+|   Candidate Count (16-bit)       |
 +-----------------------------------+
-|        PSK Commitment (64-bit)    |
+|  Intersection Status (16-bit)    |
 +-----------------------------------+
 | Responder Features|   Reserved   |
 |    (16-bit)      |   (16-bit)   |
 +-------------------+---------------+
-|        Commitment (128-bit)       |
-|                                 |
+|    Candidate Intersection        |
+|         Hashes                   |
+|   (32 bytes per candidate)       |
+|   (Variable Length)              |
 +-----------------------------------+
-Total: 50 + 52 = 102 bytes
+Total: 50 + 12 + (32 * candidate_count) bytes
 
 DISCOVERY_CONFIRM (Sub-Type 0x03):
 +-----------------------------------+
 |        Discovery ID (64-bit)     |
 +-----------------------------------+
-|Selected PSK Index|Challenge Nonce|
-|    (16-bit)      |   (64-bit)   |
-+-------------------+---------------+
-|        Response Nonce (64-bit)    |
+|    Confirmation Hash (256-bit)   |
+|   (Selected PSK fingerprint      |
+|    confirmation hash)            |
+|                                 |
 +-----------------------------------+
-|   PSK Selection Commitment       |
-|        (64-bit)                  |
+|  Confirmation Status (16-bit)    |
++-----------------------------------+
+|        Reserved (16-bit)         |
++-----------------------------------+
 +-----------------------------------+
 |        Session ID (64-bit)        |
 +-----------------------------------+

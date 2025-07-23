@@ -12,13 +12,13 @@ Time synchronization serves critical coordination and security functions:
 - **Timing Attack Prevention**: Prevents attackers from exploiting timing inconsistencies to predict port sequences
 - **Network Resilience**: Maintains synchronization despite network delays, clock drift, and varying latencies
 - **Security Enforcement**: Ensures time-based security windows (like anti-replay protection) work correctly across peers
-- **Precision Management**: Provides sub-second accuracy required for 250ms port hopping intervals
+- **Precision Management**: Provides sub-second accuracy required for 500ms port hopping intervals
 
 The synchronization system uses challenge-response protocols with cryptographic validation to ensure timing information cannot be spoofed or manipulated by attackers.
 
 ## Key Concepts
 
-- **Time Windows**: 250ms intervals synchronized across all peers for coordinated port hopping
+- **Time Windows**: 500ms intervals synchronized across all peers for coordinated port hopping
 - **Time Offset Management**: Calculation and maintenance of offset corrections between peer clocks
 - **Drift Detection**: Monitoring and correction of gradual time drift between peers
 - **Challenge-Response Sync**: Cryptographically secured time synchronization exchanges
@@ -26,18 +26,18 @@ The synchronization system uses challenge-response protocols with cryptographic 
 
 ## Time Window Calculation
 ```pseudocode
-# Time windows are 250ms wide and based on UTC time from start of current day
+# Time windows are 500ms wide and based on UTC time from start of current day
 # This ensures synchronized port hopping across all peers regardless of timezone
 # 
 # Time window calculation:
 # 1. Get current UTC time in milliseconds since epoch
 # 2. Calculate milliseconds since start of current UTC day
-# 3. Divide by 250ms to get current time window number
+# 3. Divide by 500ms to get current time window number
 # 4. Use time window number for port calculation
 #
 # Example: If current UTC time is 14:30:25.123, then:
 # - Milliseconds since start of day = (14*3600 + 30*60 + 25)*1000 + 123 = 52225123ms
-# - Time window = 52225123 // 250 = 208900 (window number)
+# - Time window = 52225123 // 500 = 104450 (window number)
 # - Port will be calculated using this window number
 ```
 
@@ -98,6 +98,68 @@ function execute_time_resync_recovery():
     time_offset = estimated_peer_time - receive_time
     
     # Step 4: Validate and apply offset
+    if abs(time_offset) > MAX_TIME_OFFSET_MS:
+        return ERROR_TIME_SYNC_REQUEST_FAILED
+    
+    # Apply gradual adjustment to prevent port hopping disruption
+    apply_gradual_time_adjustment(time_offset)
+    
+    # Step 5: Verify synchronization
+    if verify_time_synchronization():
+        log_recovery_success("Time resynchronization completed")
+        return SUCCESS
+    else:
+        return ERROR_TIME_SYNC_REQUEST_FAILED
+
+function process_time_sync_request(time_sync_request):
+    # Process TIME_SYNC_REQUEST packet (Sub-Type 0x01)
+    
+    # Step 1: Validate challenge nonce
+    if time_sync_request.challenge_nonce == 0:
+        return ERROR_TIME_SYNC_REQUEST_FAILED
+    
+    # Step 2: Record request timestamp
+    request_receive_time = get_current_time_ms()
+    
+    # Step 3: Create response
+    time_sync_response = create_time_sync_response_packet(
+        challenge_nonce = time_sync_request.challenge_nonce,
+        local_timestamp = request_receive_time,
+        peer_timestamp = time_sync_request.local_timestamp
+    )
+    
+    # Step 4: Send response immediately for accuracy
+    send_packet(time_sync_response)
+    
+    return SUCCESS
+
+function process_time_sync_response(time_sync_response):
+    # Process TIME_SYNC_RESPONSE packet (Sub-Type 0x02)
+    
+    # Step 1: Validate challenge nonce matches our request
+    if time_sync_response.challenge_nonce != pending_sync_request.challenge_nonce:
+        return ERROR_TIME_SYNC_RESPONSE_FAILED
+    
+    # Step 2: Calculate round-trip time and offset
+    response_receive_time = get_current_time_ms()
+    round_trip_time = response_receive_time - pending_sync_request.send_time
+    
+    # Step 3: Estimate peer time with RTT compensation
+    estimated_peer_time = time_sync_response.local_timestamp + (round_trip_time / 2)
+    calculated_offset = estimated_peer_time - response_receive_time
+    
+    # Step 4: Validate offset is reasonable
+    if abs(calculated_offset) > MAX_TIME_OFFSET_MS:
+        return ERROR_TIME_SYNC_RESPONSE_FAILED
+    
+    # Step 5: Apply offset correction
+    session_state.time_offset = calculated_offset
+    session_state.last_sync_time = response_receive_time
+    
+    # Clear pending request
+    pending_sync_request = null
+    
+    return SUCCESS
     if abs(time_offset) > MAX_TIME_OFFSET_MS:
         return ERROR_TIME_RESYNC_OFFSET_TOO_LARGE
     
