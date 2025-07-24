@@ -45,6 +45,31 @@ function calculate_packet_hmac(packet_data, session_key):
     
     return hmac_result
 
+function HMAC_SHA256_128(key, data):
+    # HMAC-SHA256 implementation that returns first 128 bits (16 bytes)
+    # This is the standard HMAC function used throughout the protocol
+    
+    # Standard HMAC-SHA256 implementation
+    ipad = bytes([0x36] * 64)  # Inner padding
+    opad = bytes([0x5C] * 64)  # Outer padding
+    
+    # Adjust key length
+    if len(key) > 64:
+        key = SHA256(key)  # Hash key if longer than block size
+    if len(key) < 64:
+        key = key + bytes(64 - len(key))  # Pad key to block size
+    
+    # XOR key with padding
+    ipad_key = bytes(a ^ b for a, b in zip(key, ipad))
+    opad_key = bytes(a ^ b for a, b in zip(key, opad))
+    
+    # Calculate HMAC
+    inner_hash = SHA256(ipad_key + data)
+    outer_hash = SHA256(opad_key + inner_hash)
+    
+    # Return first 128 bits (16 bytes) for consistency
+    return outer_hash[:16]
+
 function verify_packet_hmac(packet_data, session_key, received_hmac):
     # Calculate expected HMAC
     expected_hmac = calculate_packet_hmac(packet_data, session_key)
@@ -242,14 +267,30 @@ function derive_session_keys_from_dh(shared_secret, client_public_key, server_pu
     
     return session_keys
 
-function verify_ecdh_shared_secret_hash(computed_shared_secret, received_hash):
-    # Verify that both peers computed the same shared secret
-    computed_hash = SHA256(computed_shared_secret || b"ecdh_verification_v1")
+function verify_ecdh_shared_secret_hash(computed_shared_secret, client_nonce, server_nonce, server_challenge, key_exchange_id, received_hash):
+    # Verify that both peers computed the same shared secret and validate nonces
+    hash_data = concat(
+        computed_shared_secret,
+        client_nonce,
+        server_nonce,
+        server_challenge,
+        key_exchange_id,
+        b"ecdh_verification_v1"
+    )
+    computed_hash = SHA256(hash_data)
     return constant_time_compare(computed_hash, received_hash)
 
-function create_ecdh_verification_hash(shared_secret):
-    # Create verification hash of shared secret for SYN-ACK packet
-    return SHA256(shared_secret || b"ecdh_verification_v1")
+function create_ecdh_verification_hash(shared_secret, client_nonce, server_nonce, server_challenge, key_exchange_id):
+    # Create comprehensive verification hash including all nonces and challenge
+    hash_data = concat(
+        shared_secret,
+        client_nonce,
+        server_nonce,
+        server_challenge,
+        key_exchange_id,
+        b"ecdh_verification_v1"
+    )
+    return SHA256(hash_data)
 ```
 
 ### PBKDF2-Based Parameter Derivation
@@ -378,7 +419,13 @@ function handle_ecdh_connection_request(syn_packet):
         return send_error(ERROR_INVALID_CLIENT_KEY)
     
     # Step 3: Create verification hash
-    secret_hash = create_ecdh_verification_hash(shared_secret)
+    secret_hash = create_ecdh_verification_hash(
+        shared_secret,
+        syn_packet.client_nonce,
+        server_nonce,
+        server_challenge,
+        syn_packet.key_exchange_id
+    )
     
     # Step 4: Derive session parameters  
     session_keys = derive_session_keys_from_dh(
@@ -440,7 +487,13 @@ function execute_ecdh_rekey_recovery():
     )
     
     # Step 6: Verify shared secret hash for mutual authentication
-    expected_secret_hash = create_ecdh_verification_hash(rekey_shared_secret)
+    expected_secret_hash = create_ecdh_verification_hash(
+        rekey_shared_secret,
+        session_state.client_nonce,
+        session_state.server_nonce,
+        session_state.server_challenge,
+        rekey_id
+    )
     if not constant_time_compare(rekey_response.shared_secret_hash, expected_secret_hash):
         return ERROR_REKEY_SHARED_SECRET_MISMATCH
     
@@ -469,13 +522,13 @@ CURVE_P256_SCALAR_SIZE = 32             // P-256 scalar size in bytes
 CURVE_P256_POINT_SIZE = 64              // P-256 uncompressed point size in bytes (x + y coordinates)
 CURVE_P256_COMPRESSED_SIZE = 33         // P-256 compressed point size (sign + x coordinate)
 
-// ECDH and PBKDF2 constants
-ECDH_SHARED_SECRET_SIZE = 32            // ECDH shared secret size in bytes (x-coordinate)
-PBKDF2_ITERATIONS_SESSION = 4096        // PBKDF2 iterations for session key derivation
-PBKDF2_ITERATIONS_SEQUENCE = 2048       // PBKDF2 iterations for sequence number derivation
-PBKDF2_ITERATIONS_PORT = 2048           // PBKDF2 iterations for port offset derivation
-KEY_EXCHANGE_TIMEOUT_MS = 10000         // ECDH key exchange timeout (10 seconds)
-SHARED_SECRET_VERIFY_SIZE = 32          // Size of shared secret verification hash
+// ECDH and PBKDF2 constants are defined in 02-core-definitions.md:
+// - ECDH_SHARED_SECRET_SIZE = 32 (ECDH shared secret size in bytes)
+// - PBKDF2_ITERATIONS_SESSION = 4096 (PBKDF2 iterations for session key derivation)
+// - PBKDF2_ITERATIONS_SEQUENCE = 2048 (PBKDF2 iterations for sequence number derivation)
+// - PBKDF2_ITERATIONS_PORT = 2048 (PBKDF2 iterations for port offset derivation)
+// - KEY_EXCHANGE_TIMEOUT_MS = 10000 (ECDH key exchange timeout)
+// - SHARED_SECRET_VERIFY_SIZE = 32 (Size of shared secret verification hash)
 ```
 
 This ECDH-based cryptographic framework provides the strongest possible security guarantees with perfect forward secrecy and zero data exposure, ensuring all protocol operations are secured through ephemeral key exchange and cryptographic parameter derivation.

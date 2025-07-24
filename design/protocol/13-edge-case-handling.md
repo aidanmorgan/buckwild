@@ -274,7 +274,7 @@ function handle_flow_control_edge_cases():
     
     # Edge Case 5: Window update lost causing indefinite stall
     if (session_state.peer_window_size == 0 and 
-        time_since_last_window_update() > WINDOW_UPDATE_TIMEOUT):
+        time_since_last_window_update() > WINDOW_UPDATE_TIMEOUT_MS):
         # Send zero window probe to trigger window update
         return send_zero_window_probe()
     
@@ -343,7 +343,7 @@ function handle_recovery_edge_cases():
     current_time = get_current_time_ms()
     if current_time >= recovery_timeout and peer_response_received():
         # Process response even though timeout occurred
-        extend_recovery_timeout(RECOVERY_TIMEOUT_EXTENSION)
+        extend_recovery_timeout(RECOVERY_TIMEOUT_EXTENSION_MS)
         return process_recovery_response()
     
     # Edge Case 4: Recovery with corrupted or compromised keys
@@ -650,7 +650,7 @@ function handle_authentication_edge_cases():
     current_time = get_current_time_ms()
     if current_time >= auth_timeout and authentication_successful():
         # Allow authentication to complete
-        extend_auth_timeout(AUTH_TIMEOUT_EXTENSION)
+        extend_auth_timeout(AUTH_TIMEOUT_EXTENSION_MS)
         return complete_authentication()
     
     # Edge Case 2: Multiple authentication attempts
@@ -719,27 +719,14 @@ function handle_logging_edge_cases():
 ## Edge Case Constants and Thresholds
 
 ```pseudocode
-// Edge case handling constants
-MAX_TIMESTAMP_DRIFT = 30000                  // Maximum acceptable timestamp drift (30 seconds)
-MAX_EXTREME_TIME_DRIFT = 3600000             // Maximum extreme time drift (1 hour)
-MAX_ACCEPTABLE_TIME_REGRESSION = 5000        // Maximum acceptable time regression (5 seconds)
-HOP_INTERVAL_SAFETY_MARGIN = 50              // Safety margin for time window boundaries (50ms)
-MIN_DEADLOCK_WINDOW_SIZE = 1024              // Minimum window size for deadlock resolution
-WINDOW_UPDATE_TIMEOUT = 60000                // Timeout for window update detection (60 seconds)
-RECOVERY_TIMEOUT_EXTENSION = 5000            // Recovery timeout extension (5 seconds)
-MAX_RECOVERY_HMAC_FAILURES = 3               // Maximum HMAC failures during recovery
-MAX_LEGITIMATE_CLOCK_SKEW = 10000            // Maximum legitimate clock skew (10 seconds)
-MAX_DISCOVERY_RATE = 10                      // Maximum discovery attempts per minute
-MAX_ERROR_RESPONSES = 3                      // Maximum error responses to prevent loops
-MIN_REQUIRED_MEMORY = 1048576                // Minimum required memory (1 MB)
-CRITICAL_SEND_BUFFER_SIZE = 16777216         // Critical send buffer size (16 MB)
-CRITICAL_RECEIVE_BUFFER_SIZE = 16777216      // Critical receive buffer size (16 MB)
-MAX_CONCURRENT_REASSEMBLIES = 1000           // Maximum concurrent fragment reassemblies
-MAX_TOTAL_RECOVERY_ATTEMPTS = 10             // Maximum total recovery attempts per session
-SEQUENCE_WRAP_THRESHOLD = MAX_SEQUENCE_NUMBER - 1000  // Threshold for sequence wraparound
-AUTH_TIMEOUT_EXTENSION = 3000                // Authentication timeout extension (3 seconds)
-MAX_AUTH_ATTEMPTS = 5                        // Maximum authentication attempts
-HIGH_JITTER_THRESHOLD = 500                  // High jitter threshold (500ms)
+// All constants are defined in 02-core-definitions.md including:
+// - HOP_INTERVAL_SAFETY_MARGIN, MIN_DEADLOCK_WINDOW_SIZE, WINDOW_UPDATE_TIMEOUT_MS
+// - RECOVERY_TIMEOUT_EXTENSION_MS, AUTH_TIMEOUT_EXTENSION_MS 
+// - MAX_RECOVERY_HMAC_FAILURES, MAX_LEGITIMATE_CLOCK_SKEW, MAX_DISCOVERY_RATE
+// - MAX_ERROR_RESPONSES, MIN_REQUIRED_MEMORY, CRITICAL_*_BUFFER_SIZE
+// - MAX_CONCURRENT_REASSEMBLIES, MAX_TOTAL_RECOVERY_ATTEMPTS, SEQUENCE_WRAP_THRESHOLD
+// - MAX_AUTH_ATTEMPTS, HIGH_JITTER_THRESHOLD, MAX_TIMESTAMP_DRIFT
+// - MAX_EXTREME_TIME_DRIFT, MAX_ACCEPTABLE_TIME_REGRESSION
 ```
 
 ## Testing Guidelines for Edge Cases

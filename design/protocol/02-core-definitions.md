@@ -16,34 +16,35 @@ BASE_HEADER_SIZE = 18                    // Minimum header size (version + type 
 FRAGMENT_HEADER_SIZE = 8                 // Fragment header size in bytes (when fragmentation used)
 
 // Time-related constants  
-HOP_INTERVAL_MS = 500                    // Port hop interval in milliseconds (500ms time windows - used in: port-hopping.md, time-sync.md)
-TIME_SYNC_TOLERANCE_MS = 50              // Maximum allowed clock drift (used in: time-sync.md)
-HEARTBEAT_INTERVAL_MS = 30000            // Heartbeat interval (30 seconds - used in: timeout-handling.md)
-HEARTBEAT_TIMEOUT_MS = 90000             // Heartbeat timeout (90 seconds - used in: timeout-handling.md)
-MAX_PACKET_LIFETIME_MS = 60000           // Maximum packet age (60 seconds - used in: timeout-handling.md)
+HOP_INTERVAL_MS = 500                    // Port hop interval in milliseconds (500ms time windows - used in: 10-port-hopping.md, 09-time-synchronization.md)
+TIME_SYNC_TOLERANCE_MS = 50              // Maximum allowed clock drift (used in: 09-time-synchronization.md)
+HEARTBEAT_INTERVAL_MS = 30000            // Heartbeat interval (30 seconds - used in: 08-timeout-and-reliability.md)
+HEARTBEAT_TIMEOUT_MS = 90000             // Heartbeat timeout (90 seconds - used in: 08-timeout-and-reliability.md)
+MAX_PACKET_LIFETIME_MS = 60000           // Maximum packet age (60 seconds - used in: 08-timeout-and-reliability.md)
 TIMESTAMP_WINDOW_MS = 30000              // Anti-replay timestamp window
+HANDSHAKE_TIMESTAMP_WINDOW_MS = 10000    // Stricter window for handshake packets (10 seconds)
 MONTH_TRANSITION_PREPARATION_MS = 3600000 // Start month transition prep 1 hour before
 SAFETY_MARGIN_MS = 100                   // Safety margin for delay calculations
 BASE_TRANSMISSION_DELAY_ALLOWANCE_MS = 1000 // Base allowance for network transmission delay
-ADAPTIVE_DELAY_WINDOW_MIN = 1            // Minimum delay window size (time windows - used in: delay-tuning.md)
-ADAPTIVE_DELAY_WINDOW_MAX = 16           // Maximum delay window size (time windows - used in: delay-tuning.md)
-DELAY_MEASUREMENT_SAMPLES = 10           // Number of samples for delay measurement (used in: delay-tuning.md)
-DELAY_NEGOTIATION_INTERVAL_MS = 60000    // Delay parameters negotiation interval (1 minute - used in: delay-tuning.md)
-DELAY_PERCENTILE_TARGET = 95             // Target percentile for delay allowance (95th percentile - used in: delay-tuning.md)
+ADAPTIVE_DELAY_WINDOW_MIN = 1            // Minimum delay window size (time windows - used in: 11-adaptive-networking.md)
+ADAPTIVE_DELAY_WINDOW_MAX = 16           // Maximum delay window size (time windows - used in: 11-adaptive-networking.md)
+DELAY_MEASUREMENT_SAMPLES = 10           // Number of samples for delay measurement (used in: 11-adaptive-networking.md)
+DELAY_NEGOTIATION_INTERVAL_MS = 60000    // Delay parameters negotiation interval (1 minute - used in: 11-adaptive-networking.md)
+DELAY_PERCENTILE_TARGET = 95             // Target percentile for delay allowance (95th percentile - used in: 11-adaptive-networking.md)
 BASE_HEARTBEAT_PAYLOAD_SIZE = 8          // Size of base heartbeat payload (bytes)
 MILLISECONDS_PER_DAY = 86400000          // Milliseconds in a day (for timestamp calculation)
 
 // Sequence and window constants
-ECDH_KEY_EXCHANGE_TIMEOUT_MS = 10000     // ECDH connection establishment timeout (used in: packet-structure.md)
+ECDH_KEY_EXCHANGE_TIMEOUT_MS = 10000     // ECDH connection establishment timeout (used in: 04-ecdh-cryptography.md)
 SESSION_KEY_MATERIAL_SIZE = 128          // Size of master key material from PBKDF2 (1024 bits)
 CHUNK_SIZE = 2                           // Size of each 16-bit chunk in bytes
 MAX_CHUNKS_PER_DERIVATION = 64           // Maximum number of 16-bit chunks from key material
-MAX_SEQUENCE_NUMBER = 0xFFFFFFFF         // Maximum sequence number (used in: 12-psk-discovery.md)
-SEQUENCE_WRAP_THRESHOLD = 0x80000000     // Threshold for sequence wraparound (used in: 12-psk-discovery.md)
-SEQUENCE_WINDOW_SIZE = 1000              // Sequence number acceptance window (used in: recovery.md)
-INITIAL_CONGESTION_WINDOW = 1460         // Initial congestion window (bytes - used in: flow-control.md)
-MIN_CONGESTION_WINDOW = 292              // Minimum congestion window (bytes - used in: flow-control.md)
-MAX_CONGESTION_WINDOW = 65535            // Maximum congestion window (bytes - used in: flow-control.md)
+MAX_SEQUENCE_NUMBER = 0xFFFFFFFF         // Maximum sequence number (used in: 05-psk-discovery.md)
+SEQUENCE_WRAP_THRESHOLD = 0x80000000     // Threshold for sequence wraparound (used in: 14-replay-protection.md)
+SEQUENCE_WINDOW_SIZE = 1000              // Sequence number acceptance window (used in: 14-replay-protection.md)
+INITIAL_CONGESTION_WINDOW = 1460         // Initial congestion window (bytes - used in: 07-data-transmission.md)
+MIN_CONGESTION_WINDOW = 292              // Minimum congestion window (bytes - used in: 07-data-transmission.md)
+MAX_CONGESTION_WINDOW = 65535            // Maximum congestion window (bytes - used in: 07-data-transmission.md)
 MAX_RECEIVE_WINDOW = 65535               // Maximum receive window (bytes)
 
 // Retransmission and timeout constants
@@ -130,9 +131,16 @@ PBKDF2_ITERATIONS_SEQUENCE = 2048       // PBKDF2 iterations for sequence number
 PBKDF2_ITERATIONS_PORT = 2048           // PBKDF2 iterations for port offset derivation
 KEY_EXCHANGE_TIMEOUT_MS = 10000         // ECDH key exchange timeout (10 seconds)
 SHARED_SECRET_VERIFY_SIZE = 32          // Size of shared secret verification hash
-FRAGMENT_TIMEOUT_MS = 30000             // Fragment reassembly timeout (30 seconds - used in: fragmentation.md, timeout-handling.md)
+FRAGMENT_TIMEOUT_MS = 30000             // Fragment reassembly timeout (30 seconds - used in: 07-data-transmission.md, 08-timeout-and-reliability.md)
 BLOCK_DURATION_MS = 300000              // Block duration for enumeration attempts (5 minutes)
 REPLAY_THRESHOLD = 5                    // Threshold for replay attack detection
+
+// Anti-replay protection constants
+MAX_OUT_OF_ORDER_RATE = 10              // Maximum out-of-order packets per minute
+SYN_FLOOD_THRESHOLD = 100               // Maximum SYN attempts per source per minute
+HANDSHAKE_CACHE_SIZE = 50000            // Server-side handshake cache entries
+REORDER_TIMEOUT_MS = 5000               // Timeout for reorder buffer entries
+SYN_CLEANUP_INTERVAL = 30000            // SYN cache cleanup interval (30 seconds)
 
 // Recovery timeout constants
 RECOVERY_TIMEOUT_MS = 15000             // Recovery process timeout (15 seconds)
@@ -160,10 +168,34 @@ TIMESTAMP_16BIT = 0                     // 16-bit timestamp (2 bytes, 1.09 minut
 TIMESTAMP_24BIT = 1                     // 24-bit timestamp (3 bytes, 4.66 hours)
 TIMESTAMP_32BIT = 2                     // 32-bit timestamp (4 bytes, full month)
 
-// HMAC configuration
-HMAC_FULL = 0                          // 128-bit HMAC (16 bytes)
-HMAC_STRONG = 1                        // 64-bit HMAC (8 bytes)  
-HMAC_LIGHT = 2                         // 32-bit HMAC (4 bytes)
+// HMAC Policy Configuration
+// Three distinct HMAC policies for different security/performance requirements
+HMAC_LIGHT = 1                         // 64-bit HMAC-SHA256, 128-bit key, minimal authentication (8 bytes output)
+HMAC_MEDIUM = 2                        // 128-bit HMAC-SHA256, 256-bit key, standard authentication (16 bytes output)  
+HMAC_STRONG = 3                        // 256-bit HMAC-SHA512, 512-bit key, maximum authentication (32 bytes output)
+
+// HMAC Policy Output Lengths
+HMAC_LIGHT_OUTPUT_SIZE = 8             // 64 bits (8 bytes)
+HMAC_MEDIUM_OUTPUT_SIZE = 16           // 128 bits (16 bytes)
+HMAC_STRONG_OUTPUT_SIZE = 32           // 256 bits (32 bytes)
+
+// HMAC Policy Key Lengths
+HMAC_LIGHT_KEY_SIZE = 16               // 128 bits (16 bytes)
+HMAC_MEDIUM_KEY_SIZE = 32              // 256 bits (32 bytes)
+HMAC_STRONG_KEY_SIZE = 64              // 512 bits (64 bytes)
+
+// HMAC Policy Algorithm Specifications:
+// HMAC_LIGHT: HMAC-SHA256 truncated to 64 bits with 128-bit key
+// HMAC_MEDIUM: HMAC-SHA256 truncated to 128 bits with 256-bit key
+// HMAC_STRONG: HMAC-SHA512 truncated to 256 bits with 512-bit key
+
+// Connection Context Hash Size (used in HMAC_STRONG)
+CONNECTION_CONTEXT_HASH_SIZE = 32      // 256 bits (32 bytes)
+
+// Security Mode Configuration
+SECURITY_MODE_PERFORMANCE = 1          // Prefer HMAC_LIGHT for performance
+SECURITY_MODE_BALANCED = 2             // Use standard policy guidelines
+SECURITY_MODE_HIGH_SECURITY = 3        // Prefer HMAC_STRONG for security
 
 // Flow control constants
 INITIAL_SEND_WINDOW = 8192              // Initial send window size (bytes)
@@ -171,11 +203,22 @@ INITIAL_RECEIVE_WINDOW = 16384          // Initial receive window size (bytes)
 WINDOW_SCALE_FACTOR = 1                 // Window scaling factor
 WINDOW_UPDATE_THRESHOLD = 0.5           // Threshold for sending window updates (fraction)
 ZERO_WINDOW_PROBE_INTERVAL_MS = 5000    // Zero window probe interval
-WINDOW_TIMEOUT_MS = 60000               // Window timeout for flow control
+WINDOW_UPDATE_TIMEOUT_MS = 60000        // Window update detection timeout (consolidated from WINDOW_TIMEOUT_MS)
 
 // Recovery mechanism constants
 MAX_REPAIR_WINDOW_SIZE = 1000           // Maximum repair window size (packets)
 MAX_WINDOW_SIZE = 65535                 // Maximum flow control window size
+
+// Additional timeout constants (previously referenced but not defined)
+SESSION_IDLE_TIMEOUT_MS = 900000        // Session idle timeout (15 minutes)
+MAX_HEARTBEAT_FAILURES = 3              // Maximum consecutive heartbeat failures
+EMERGENCY_RECOVERY_TIMEOUT_MS = 5000    // Emergency recovery timeout (5 seconds)
+HOP_INTERVAL_SAFETY_MARGIN_MS = 50      // Safety margin for time window boundaries (50ms)
+AUTH_TIMEOUT_EXTENSION_MS = 3000        // Authentication timeout extension (3 seconds)
+RECOVERY_TIMEOUT_EXTENSION_MS = 5000    // Recovery timeout extension (5 seconds)
+
+// Consolidated timeout constants (removing duplicates)
+// KEY_EXCHANGE_TIMEOUT_MS covers all ECDH operations including connection establishment
 
 // Discovery states
 DISCOVERY_IDLE = 0                      // No discovery in progress
@@ -203,6 +246,10 @@ CONTROL_SUB_TIME_SYNC_REQUEST = 0x01    // Time synchronization request
 CONTROL_SUB_TIME_SYNC_RESPONSE = 0x02   // Time synchronization response
 CONTROL_SUB_RECOVERY = 0x03             // Session recovery
 CONTROL_SUB_SEQUENCE_NEG = 0x04         // Sequence number negotiation
+
+// Reserved CONTROL sub-types (for future use)
+// CONTROL_SUB_RESERVED_05 = 0x05       // Reserved for future HMAC policy operations
+// CONTROL_SUB_RESERVED_06 = 0x06       // Reserved for future HMAC policy acknowledgments
 
 // MANAGEMENT packet sub-types
 MANAGEMENT_SUB_REKEY_REQUEST = 0x01     // Session key rotation request
@@ -330,62 +377,131 @@ ERROR_ECDH_KEY_EXCHANGE_FAILED = 0x14
 ERROR_DISCOVERY_TIMEOUT = 0x15
 ERROR_ECDH_VERIFICATION_FAILED = 0x16
 ERROR_PSK_ENUMERATION_ATTEMPT = 0x17
+ERROR_AUTHENTICATION_FAILED = 0x18
 
 // CONTROL packet sub-type errors
-ERROR_TIME_SYNC_REQUEST_FAILED = 0x18
-ERROR_TIME_SYNC_RESPONSE_FAILED = 0x19
-ERROR_RECOVERY_REQUEST_FAILED = 0x1A
-ERROR_SEQUENCE_NEGOTIATION_FAILED = 0x1B
+ERROR_TIME_SYNC_REQUEST_FAILED = 0x19
+ERROR_TIME_SYNC_RESPONSE_FAILED = 0x1A
+ERROR_RECOVERY_REQUEST_FAILED = 0x1B
+ERROR_SEQUENCE_NEGOTIATION_FAILED = 0x1C
 
 // MANAGEMENT packet sub-type errors
-ERROR_REKEY_REQUEST_FAILED = 0x1C
-ERROR_REKEY_RESPONSE_FAILED = 0x1D
-ERROR_REPAIR_REQUEST_FAILED = 0x1E
-ERROR_REPAIR_RESPONSE_FAILED = 0x1F
+ERROR_REKEY_REQUEST_FAILED = 0x1D
+ERROR_REKEY_RESPONSE_FAILED = 0x1E
+ERROR_REPAIR_REQUEST_FAILED = 0x1F
+ERROR_REPAIR_RESPONSE_FAILED = 0x20
 
 // DISCOVERY packet sub-type errors
-ERROR_DISCOVERY_REQUEST_FAILED = 0x20
-ERROR_DISCOVERY_RESPONSE_FAILED = 0x21
-ERROR_DISCOVERY_CONFIRM_FAILED = 0x22
+ERROR_DISCOVERY_REQUEST_FAILED = 0x21
+ERROR_DISCOVERY_RESPONSE_FAILED = 0x22
+ERROR_DISCOVERY_CONFIRM_FAILED = 0x23
 
 // Fragmentation and flow control errors
-ERROR_FRAGMENT_TIMEOUT = 0x23
-ERROR_FRAGMENT_OVERLAP = 0x24
-ERROR_FRAGMENT_BOMB = 0x25
-ERROR_ZERO_WINDOW_DEADLOCK = 0x26
-ERROR_WINDOW_UPDATE_FAILED = 0x27
+ERROR_FRAGMENT_TIMEOUT = 0x24
+ERROR_FRAGMENT_OVERLAP = 0x25
+ERROR_FRAGMENT_BOMB = 0x26
+ERROR_ZERO_WINDOW_DEADLOCK = 0x27
+ERROR_WINDOW_UPDATE_FAILED = 0x28
 
 // Multi-connection errors
-ERROR_PORT_COLLISION = 0x28
-ERROR_SESSION_ID_COLLISION = 0x29
-ERROR_CONNECTION_LIMIT_EXCEEDED = 0x2A
+ERROR_PORT_COLLISION = 0x29
+ERROR_SESSION_ID_COLLISION = 0x2A
+ERROR_CONNECTION_LIMIT_EXCEEDED = 0x2B
 
 // Security attack detection errors
-ERROR_RATE_LIMITED = 0x2B
-ERROR_ENUMERATION_DETECTED = 0x2C
-ERROR_INJECTION_ATTEMPT = 0x2D
-ERROR_TAMPERING_DETECTED = 0x2E
+ERROR_RATE_LIMITED = 0x2C
+ERROR_ENUMERATION_DETECTED = 0x2D
+ERROR_INJECTION_ATTEMPT = 0x2E
+ERROR_TAMPERING_DETECTED = 0x2F
 
 // Privacy-preserving set intersection errors
-ERROR_PSI_BLOOM_FILTER_INVALID = 0x2F
-ERROR_PSI_NO_INTERSECTION = 0x30
-ERROR_PSI_CANDIDATE_VERIFICATION_FAILED = 0x31
-ERROR_PSK_CONFIRMATION_INVALID = 0x32
-ERROR_PSI_BLINDED_FINGERPRINT_FAILED = 0x33
-ERROR_BLOOM_FILTER_SIZE_INVALID = 0x34
+ERROR_PSI_BLOOM_FILTER_INVALID = 0x30
+ERROR_PSI_NO_INTERSECTION = 0x31
+ERROR_PSI_CANDIDATE_VERIFICATION_FAILED = 0x32
+ERROR_PSK_CONFIRMATION_INVALID = 0x33
+ERROR_PSI_BLINDED_FINGERPRINT_FAILED = 0x34
+ERROR_BLOOM_FILTER_SIZE_INVALID = 0x35
 
 // Additional error codes for edge case handling
-ERROR_ZERO_KNOWLEDGE_PROOF_FAILED = 0x35
-ERROR_UNSUPPORTED_VERSION = 0x36
-ERROR_INVALID_PACKET_TYPE = 0x37
-ERROR_UNKNOWN_PACKET_TYPE = 0x38
-ERROR_INVALID_SUB_TYPE = 0x39
-ERROR_PAYLOAD_TOO_LARGE = 0x3A
-ERROR_EMPTY_DATA_PACKET = 0x3B
-ERROR_INVALID_SESSION_ID = 0x3C
+ERROR_ZERO_KNOWLEDGE_PROOF_FAILED = 0x36
+ERROR_UNSUPPORTED_VERSION = 0x37
+ERROR_INVALID_PACKET_TYPE = 0x38
+ERROR_UNKNOWN_PACKET_TYPE = 0x39
+ERROR_INVALID_SUB_TYPE = 0x3A
+ERROR_PAYLOAD_TOO_LARGE = 0x3B
+ERROR_EMPTY_DATA_PACKET = 0x3C
+ERROR_INVALID_SESSION_ID = 0x3D
+
+// Additional error codes for edge case handling and recovery
+ERROR_TIME_RESYNC_TIMEOUT = 0x3E
+ERROR_TIME_RESYNC_INVALID_CHALLENGE = 0x3F
+ERROR_TIME_RESYNC_OFFSET_TOO_LARGE = 0x40
+ERROR_TIME_RESYNC_VERIFICATION_FAILED = 0x41
+ERROR_SEQUENCE_REPAIR_TIMEOUT = 0x42
+ERROR_SEQUENCE_REPAIR_INVALID_NONCE = 0x43
+ERROR_SEQUENCE_REPAIR_INVALID_CONFIRMATION = 0x44
+ERROR_REKEY_TIMEOUT = 0x45
+ERROR_REKEY_INVALID_NONCE = 0x46
+ERROR_REKEY_INVALID_KEY = 0x47
+ERROR_REKEY_SHARED_SECRET_MISMATCH = 0x48
+ERROR_RECOVERY_ALREADY_IN_PROGRESS = 0x49
+ERROR_RECOVERY_RETRY_SCHEDULED = 0x4A
+ERROR_SESSION_UNRECOVERABLE = 0x4B
+ERROR_INVALID_RECOVERY_LEVEL = 0x4C
+ERROR_REPLAY_ATTACK_DETECTED = 0x4D
+ERROR_SOURCE_BLOCKED = 0x4E
+ERROR_INVALID_CONFIGURATION = 0x4F
+ERROR_TIMESTAMP_OUT_OF_RANGE = 0x50
+ERROR_SEQUENCE_WRAPAROUND_NOT_READY = 0x51
+ERROR_PACKET_TOO_SHORT = 0x52
+ERROR_PAYLOAD_LENGTH_MISMATCH = 0x53
+ERROR_RESERVED_FIELDS_NOT_ZERO = 0x54
+ERROR_INVALID_FLAG_COMBINATION = 0x55
+ERROR_FRAGMENT_INDEX_OUT_OF_BOUNDS = 0x56
+ERROR_TOO_MANY_FRAGMENTS = 0x57
+ERROR_FRAGMENT_ID_COLLISION = 0x58
+ERROR_FRAGMENT_DATA_MISMATCH = 0x59
+ERROR_EMPTY_FINAL_FRAGMENT = 0x5A
+ERROR_CLOCK_REGRESSION_DETECTED = 0x5B
+ERROR_RECOVERY_DURING_TERMINATION = 0x5C
+ERROR_RECOVERY_ATTEMPTS_EXHAUSTED = 0x5D
+ERROR_CRITICAL_OPERATION_INTERRUPTED = 0x5E
+ERROR_PORT_RANGE_EXHAUSTED = 0x5F
+ERROR_PERMISSION_DENIED = 0x60
+ERROR_NO_AVAILABLE_PORTS = 0x61
+ERROR_ADDRESS_IN_USE = 0x62
+ERROR_SYSTEM_SHUTTING_DOWN = 0x63
+ERROR_VERSION_TOO_OLD = 0x64
+ERROR_VERSION_TOO_NEW = 0x65
+ERROR_SEND_BUFFER_OVERFLOW = 0x66
+ERROR_RESOURCE_EXHAUSTED = 0x67
+ERROR_BUFFER_FULL = 0x68
+ERROR_BUFFER_EMPTY = 0x69
+ERROR_TIMESTAMP_ATTACK_DETECTED = 0x6A
+ERROR_INVALID_CRYPTO_PARAMETERS = 0x6B
+ERROR_AUTH_LOCKOUT = 0x6C
+ERROR_INVALID_PUBLIC_KEY = 0x6D
 
 // Connection termination error
-ERROR_CONNECTION_TERMINATE = 0x3D
+ERROR_CONNECTION_TERMINATE = 0x6E
+
+// Additional constants for edge case handling
+MAX_ERROR_RESPONSES = 3                      // Maximum error responses to prevent loops
+MAX_RECOVERY_HMAC_FAILURES = 3               // Maximum HMAC failures during recovery
+MAX_LEGITIMATE_CLOCK_SKEW = 10000            // Maximum legitimate clock skew (10 seconds)
+MAX_DISCOVERY_RATE = 10                      // Maximum discovery attempts per minute
+MIN_REQUIRED_MEMORY = 1048576                // Minimum required memory (1 MB)
+CRITICAL_SEND_BUFFER_SIZE = 16777216         // Critical send buffer size (16 MB)
+CRITICAL_RECEIVE_BUFFER_SIZE = 16777216      // Critical receive buffer size (16 MB)
+MAX_CONCURRENT_REASSEMBLIES = 1000           // Maximum concurrent fragment reassemblies
+MAX_TOTAL_RECOVERY_ATTEMPTS = 10             // Maximum total recovery attempts per session
+HOP_INTERVAL_SAFETY_MARGIN = 50              // Safety margin for time window boundaries (50ms)
+MIN_DEADLOCK_WINDOW_SIZE = 1024              // Minimum window size for deadlock resolution
+MAX_AUTH_ATTEMPTS = 5                        // Maximum authentication attempts
+HIGH_JITTER_THRESHOLD = 500                  // High jitter threshold (500ms)
+MAX_TIMESTAMP_DRIFT = 30000                  // Maximum acceptable timestamp drift (30 seconds)
+MAX_EXTREME_TIME_DRIFT = 3600000             // Maximum extreme time drift (1 hour)
+MAX_ACCEPTABLE_TIME_REGRESSION = 5000        // Maximum acceptable time regression (5 seconds)
 ```
 
 ### Error Code Descriptions

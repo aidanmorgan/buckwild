@@ -32,6 +32,14 @@ The system is designed to handle legitimate network conditions (reordering, dela
 
 ### Timestamp Validation Window
 
+The TIMESTAMP_WINDOW_MS defines a 30-second sliding window for timestamp-based replay protection. This mechanism works with sequence number validation to provide protection against replay attacks while handling network conditions.
+
+**Core Principles:**
+- Packets with timestamps older than 30 seconds are rejected
+- Packets with timestamps more than 50ms in the future are rejected (clock skew tolerance)
+- Duplicate timestamps within the window are detected and blocked
+- Out-of-order packets within the window are accepted if not duplicates
+
 ```pseudocode
 // Timestamp validation constants (from 02-core-definitions.md)
 TIMESTAMP_WINDOW_MS = 30000              // Anti-replay timestamp window (30 seconds)
@@ -64,30 +72,57 @@ function validate_packet_timestamp(packet):
         current_ms_since_month
     )
     
-    # Check if packet is too old (outside maximum lifetime)
-    if time_difference > MAX_PACKET_LIFETIME_MS:
+    # Use stricter window for handshake packets
+    timestamp_window = TIMESTAMP_WINDOW_MS
+    if is_handshake_packet(packet):
+        timestamp_window = HANDSHAKE_TIMESTAMP_WINDOW_MS
+    
+    # TIMESTAMP_WINDOW_MS Validation: Core Anti-Replay Mechanism
+    # Phase 1: Age-based validation (30-second or 10-second sliding window)
+    if time_difference > timestamp_window:
+        # Packet timestamp is older than allowed window - replay attack
         timestamp_validation_state.window_violations += 1
+        log_replay_attempt("timestamp_too_old", packet, time_difference)
         return ERROR_TIMESTAMP_INVALID
     
-    # Check if packet is from the future (clock skew)
+    # Phase 2: Future timestamp validation (clock skew tolerance)
     if time_difference < -TIME_SYNC_TOLERANCE_MS:
-        # Allow small future timestamps due to clock drift
+        # Packet claims to be from more than 50ms in the future
         if time_difference < -TIMESTAMP_WINDOW_MS:
+            # Far future timestamp (>30s) - invalid
             timestamp_validation_state.window_violations += 1
+            log_replay_attempt("timestamp_far_future", packet, time_difference)
             return ERROR_TIMESTAMP_INVALID
+        else:
+            # Near future timestamp (50ms-30s) - clock skew
+            log_clock_skew_warning(packet, time_difference)
     
-    # Check if timestamp was recently seen (replay detection)
+    # Phase 3: Duplicate timestamp detection within window
     timestamp_key = generate_timestamp_key(packet)
     if timestamp_key in timestamp_validation_state.timestamp_cache:
+        # This exact timestamp+session+sequence combination was recently seen
         timestamp_validation_state.replay_counter += 1
+        log_replay_attempt("duplicate_timestamp", packet, time_difference)
         return ERROR_REPLAY_ATTACK
     
-    # Add to recent timestamp cache
-    timestamp_validation_state.timestamp_cache.add(timestamp_key, current_time)
+    # Phase 4: Out-of-order acceptance within window
+    # Packet timestamp is within valid window and not a duplicate
+    # Accept the packet even if it arrives out of chronological order
+    # The sequence number validation handles ordering requirements
+    
+    # Add to recent timestamp cache with expiration
+    cache_entry = {
+        'timestamp_key': timestamp_key,
+        'packet_timestamp': packet_timestamp,
+        'received_time': current_time,
+        'session_id': packet.header.session_id,
+        'sequence_number': packet.header.sequence_number
+    }
+    timestamp_validation_state.timestamp_cache.add(timestamp_key, cache_entry)
     timestamp_validation_state.recent_timestamps.add(packet_timestamp)
     
-    # Periodic cleanup of old timestamps
-    if current_time - timestamp_validation_state.last_cleanup_time > TIMESTAMP_WINDOW_MS:
+    # Phase 5: Periodic cleanup of expired entries
+    if current_time - timestamp_validation_state.last_cleanup_time > TIMESTAMP_WINDOW_MS // 2:
         cleanup_old_timestamps(current_time)
     
     return SUCCESS
@@ -116,9 +151,175 @@ function cleanup_old_timestamps(current_time):
     # Remove timestamps older than replay window
     cutoff_time = current_time - TIMESTAMP_WINDOW_MS
     
-    timestamp_validation_state.timestamp_cache.remove_older_than(cutoff_time)
+    # Remove expired entries from timestamp cache
+    expired_count = 0
+    for key, entry in timestamp_validation_state.timestamp_cache.items():
+        if entry.received_time < cutoff_time:
+            timestamp_validation_state.timestamp_cache.remove(key)
+            expired_count += 1
+    
+    # Remove old timestamps from recent buffer
     timestamp_validation_state.recent_timestamps.remove_older_than(cutoff_time)
     timestamp_validation_state.last_cleanup_time = current_time
+    
+    # Log cleanup statistics
+    if expired_count > 0:
+        log_timestamp_cache_cleanup(expired_count, cutoff_time)
+
+### Duplicate Detection Mechanism
+
+The timestamp-based duplicate detection mechanism creates unique keys for each packet combining multiple packet attributes. This prevents replay attacks while allowing legitimate retransmissions.
+
+```pseudocode
+function generate_timestamp_key(packet):
+    # Generate unique key for timestamp cache to prevent replay attacks
+    # Combines multiple packet attributes to create collision-resistant identifier
+    
+    # Primary components for uniqueness
+    primary_data = concat(
+        packet.header.timestamp,           # When packet claims to be sent
+        packet.header.session_id,          # Which session/connection
+        packet.header.sequence_number,     # Position in data stream
+        packet.header.type                 # Type of packet
+    )
+    
+    # Secondary components for collision resistance
+    secondary_data = concat(
+        packet.header.sub_type,            # Packet sub-type if applicable
+        packet.header.payload_length,      # Size of payload
+        packet.payload[0:8] if len(packet.payload) >= 8 else packet.payload  # First 8 bytes of payload
+    )
+    
+    # Generate collision-resistant hash
+    full_key_data = primary_data + secondary_data
+    return hash_64bit(full_key_data)
+
+function detect_duplicate_packet(packet, session_state):
+    # Multi-layer duplicate detection combining timestamp and sequence validation
+    
+    # Layer 1: Timestamp-based duplicate detection (handles replay attacks)
+    timestamp_key = generate_timestamp_key(packet)
+    if timestamp_key in timestamp_validation_state.timestamp_cache:
+        cached_entry = timestamp_validation_state.timestamp_cache.get(timestamp_key)
+        
+        # Verify this is truly a duplicate (not just hash collision)
+        if (cached_entry.session_id == packet.header.session_id and
+            cached_entry.sequence_number == packet.header.sequence_number and
+            cached_entry.packet_timestamp == packet.header.timestamp):
+            
+            # Confirmed duplicate - log and reject
+            log_duplicate_detection("timestamp_duplicate", packet, cached_entry)
+            return ERROR_REPLAY_ATTACK
+    
+    # Layer 2: Sequence-based duplicate detection (handles retransmissions)
+    sequence_result = validate_packet_sequence(packet, session_state)
+    if sequence_result == ERROR_REPLAY_ATTACK:
+        log_duplicate_detection("sequence_duplicate", packet)
+        return ERROR_REPLAY_ATTACK
+    
+    return SUCCESS
+
+### Out-of-Order Packet Handling
+
+The protocol handles out-of-order packets within the timestamp window while maintaining security against replay attacks.
+
+```pseudocode
+function handle_out_of_order_packet(packet, session_state):
+    # Handle packets that arrive out of chronological order but within valid windows
+    
+    current_time = get_current_time_ms()
+    packet_timestamp = packet.header.timestamp
+    
+    # Calculate how far out of order this packet is
+    month_start = get_current_month_start_utc()
+    packet_age = current_time - (month_start + packet_timestamp)
+    
+    # Accept out-of-order packets within timestamp window
+    if packet_age <= TIMESTAMP_WINDOW_MS and packet_age >= 0:
+        # Packet is within acceptable age range
+        
+        # Check if this is legitimate out-of-order arrival
+        if is_legitimate_out_of_order(packet, session_state):
+            # Update out-of-order statistics
+            session_state.out_of_order_count += 1
+            session_state.last_out_of_order_time = current_time
+            
+            # Add to reorder buffer for proper sequencing
+            add_to_reorder_buffer(packet, session_state)
+            
+            log_out_of_order_acceptance(packet, packet_age)
+            return SUCCESS
+        else:
+            # Suspicious out-of-order pattern - attack
+            log_suspicious_out_of_order(packet, packet_age)
+            return ERROR_REPLAY_ATTACK
+    else:
+        # Packet too old or invalid timestamp
+        return ERROR_TIMESTAMP_INVALID
+
+function is_legitimate_out_of_order(packet, session_state):
+    # Determine if out-of-order packet is legitimate network reordering
+    
+    # Check 1: Sequence number within acceptable reorder window
+    sequence_gap = abs(packet.header.sequence_number - session_state.expected_sequence)
+    if sequence_gap > SEQUENCE_WINDOW_SIZE:
+        return false  # Too far out of sequence
+    
+    # Check 2: Not too many out-of-order packets recently
+    if session_state.out_of_order_count > MAX_OUT_OF_ORDER_RATE:
+        recent_time_window = 60000  # 1 minute
+        if current_time - session_state.last_out_of_order_time < recent_time_window:
+            return false  # Too many out-of-order packets recently
+    
+    # Check 3: Reasonable timestamp relationship
+    expected_timestamp_range = calculate_expected_timestamp_range(session_state)
+    if packet.header.timestamp not in expected_timestamp_range:
+        return false  # Timestamp doesn't match expected pattern
+    
+    return true
+
+function add_to_reorder_buffer(packet, session_state):
+    # Add out-of-order packet to reorder buffer for proper sequencing
+    
+    # Create reorder buffer entry
+    reorder_entry = {
+        'packet': packet,
+        'sequence_number': packet.header.sequence_number,
+        'timestamp': packet.header.timestamp,
+        'received_time': get_current_time_ms(),
+        'reorder_timeout': get_current_time_ms() + REORDER_TIMEOUT_MS
+    }
+    
+    # Insert in sequence order
+    insert_position = find_sequence_position(session_state.reorder_buffer, packet.header.sequence_number)
+    session_state.reorder_buffer.insert(insert_position, reorder_entry)
+    
+    # Limit reorder buffer size
+    if len(session_state.reorder_buffer) > REORDER_BUFFER_SIZE:
+        # Remove oldest entry
+        oldest_entry = min(session_state.reorder_buffer, key=lambda x: x.received_time)
+        session_state.reorder_buffer.remove(oldest_entry)
+        log_reorder_buffer_overflow(oldest_entry.sequence_number)
+    
+    # Try to deliver consecutive packets from buffer
+    deliver_consecutive_packets(session_state)
+
+function deliver_consecutive_packets(session_state):
+    # Deliver any consecutive packets from reorder buffer
+    
+    delivered_count = 0
+    while (len(session_state.reorder_buffer) > 0 and
+           session_state.reorder_buffer[0].sequence_number == session_state.expected_sequence):
+        
+        # Remove from reorder buffer and deliver
+        packet_entry = session_state.reorder_buffer.pop(0)
+        deliver_packet_to_application(packet_entry.packet)
+        
+        session_state.expected_sequence += 1
+        delivered_count += 1
+    
+    if delivered_count > 0:
+        log_reorder_delivery(delivered_count, session_state.expected_sequence)
 ```
 
 ## Sequence Number Replay Protection
@@ -126,10 +327,10 @@ function cleanup_old_timestamps(current_time):
 ### Sequence Number Window Tracking
 
 ```pseudocode
-// Sequence number validation constants
-SEQUENCE_WINDOW_SIZE = 1000              // Sequence number acceptance window
-RECENT_SEQUENCES_SIZE = 100              // Recent sequence number cache
-SEQUENCE_WRAP_THRESHOLD = 0x80000000     // Threshold for sequence wraparound
+// Sequence number validation constants are defined in 02-core-definitions.md:
+// - SEQUENCE_WINDOW_SIZE = 1000 (Sequence number acceptance window)
+// - RECENT_SEQUENCES_SIZE = 100 (Recent sequence number cache)
+// - SEQUENCE_WRAP_THRESHOLD = 0x80000000 (Threshold for sequence wraparound)
 
 // Sequence validation state per session
 sequence_validation_state = {
@@ -286,44 +487,108 @@ function validate_packet_specific_replay(packet, session_state):
 ### Connection Establishment Replay Protection
 
 ```pseudocode
-// SYN packet replay protection
-syn_replay_state = {
-    'recent_syn_packets': LRUCache(1000),
+// Handshake replay protection with server-side cache
+handshake_replay_state = {
+    'recent_handshakes': LRUCache(10000),    // Larger cache for handshake attempts
     'syn_flood_counter': 0,
-    'last_syn_cleanup': 0
+    'last_cleanup': 0,
+    'cleanup_interval': HANDSHAKE_TIMESTAMP_WINDOW_MS  // Cleanup after 10 seconds
 }
 
+// Server-side handshake cache for comprehensive replay detection
+server_handshake_cache = LRUCache(50000)  // Track recent handshake attempts
+
+function is_handshake_packet(packet):
+    # Check if packet is part of handshake sequence
+    if packet.header.type in [PACKET_TYPE_SYN, PACKET_TYPE_SYN_ACK]:
+        return true
+    # ACK packets with challenge response are also handshake packets
+    if packet.header.type == PACKET_TYPE_ACK and hasattr(packet, 'challenge_response'):
+        return true
+    return false
+
 function validate_syn_replay(syn_packet):
-    # Generate unique SYN identifier
-    syn_id = generate_syn_identifier(syn_packet)
+    # Enforce stricter timestamp window for handshakes
+    current_time = get_current_time_ms()
+    packet_age = current_time - syn_packet.header.timestamp
     
-    # Check if SYN was recently seen
-    if syn_id in syn_replay_state.recent_syn_packets:
-        syn_replay_state.syn_flood_counter += 1
+    if packet_age > HANDSHAKE_TIMESTAMP_WINDOW_MS:
+        return ERROR_TIMESTAMP_INVALID
+    
+    # Generate comprehensive cache key
+    cache_key = generate_handshake_cache_key(syn_packet)
+    
+    # Check server-side handshake cache
+    if cache_key in server_handshake_cache:
+        handshake_replay_state.syn_flood_counter += 1
         
         # Check for SYN flood attack
-        if syn_replay_state.syn_flood_counter > SYN_FLOOD_THRESHOLD:
+        if handshake_replay_state.syn_flood_counter > SYN_FLOOD_THRESHOLD:
             return ERROR_RATE_LIMITED
         
         return ERROR_REPLAY_ATTACK
     
-    # Add to recent SYN cache with timestamp
-    current_time = get_current_time_ms()
-    syn_replay_state.recent_syn_packets.add(syn_id, current_time)
+    # Add to server cache with timestamp
+    server_handshake_cache.add(cache_key, current_time)
     
-    # Cleanup old entries
-    if current_time - syn_replay_state.last_syn_cleanup > SYN_CLEANUP_INTERVAL:
-        cleanup_old_syn_entries(current_time)
+    # Cleanup old entries more frequently for handshakes
+    if current_time - handshake_replay_state.last_cleanup > handshake_replay_state.cleanup_interval:
+        cleanup_old_handshake_entries(current_time)
     
     return SUCCESS
 
+function generate_handshake_cache_key(packet):
+    # Create comprehensive cache key including all security-critical fields
+    # This prevents any form of packet manipulation or replay
+    key_data = concat(
+        packet.header.type,
+        packet.header.timestamp,
+        packet.header.sequence_number,
+        packet.client_public_key if hasattr(packet, 'client_public_key') else b'',
+        packet.server_public_key if hasattr(packet, 'server_public_key') else b'',
+        packet.client_nonce if hasattr(packet, 'client_nonce') else b'',
+        packet.server_nonce if hasattr(packet, 'server_nonce') else b'',
+        packet.key_exchange_id if hasattr(packet, 'key_exchange_id') else 0,
+        packet.source_address  # Include source to prevent cross-source replay
+    )
+    return hash_256bit(key_data)
+
 function generate_syn_identifier(syn_packet):
-    # Create unique identifier for SYN packet
-    # Includes ECDH public key to prevent replay with different keys
+    # Delegate to comprehensive cache key generation
+    return generate_handshake_cache_key(syn_packet)
+
+function validate_syn_ack_replay(syn_ack_packet):
+    # Enforce stricter timestamp window for handshakes
+    current_time = get_current_time_ms()
+    packet_age = current_time - syn_ack_packet.header.timestamp
+    
+    if packet_age > HANDSHAKE_TIMESTAMP_WINDOW_MS:
+        return ERROR_TIMESTAMP_INVALID
+    
+    # Verify both client and server nonces
+    if syn_ack_packet.client_nonce_echo != session_state.client_nonce:
+        return ERROR_REPLAY_ATTACK
+    
+    # Generate comprehensive cache key
+    cache_key = generate_handshake_cache_key(syn_ack_packet)
+    
+    # Check if SYN-ACK was recently seen
+    if cache_key in handshake_replay_state.recent_handshakes:
+        return ERROR_REPLAY_ATTACK
+    
+    # Add to cache
+    handshake_replay_state.recent_handshakes.add(cache_key, current_time)
+    
+    return SUCCESS
+
+function generate_syn_ack_identifier(syn_ack_packet):
+    # Create unique identifier for SYN-ACK packet
     id_data = concat(
-        syn_packet.client_public_key,
-        syn_packet.key_exchange_id,
-        syn_packet.header.timestamp
+        syn_ack_packet.server_public_key,
+        syn_ack_packet.server_nonce,        # Server nonce for uniqueness
+        syn_ack_packet.client_nonce_echo,   # Echoed client nonce
+        syn_ack_packet.key_exchange_id,
+        syn_ack_packet.header.timestamp
     )
     return hash_256bit(id_data)
 ```
@@ -391,7 +656,9 @@ function calculate_packet_hmac_with_replay_protection(packet, session_key):
     
     # For specific packet types, include additional nonces
     if packet.header.type == PACKET_TYPE_SYN:
-        hmac_data = concat(hmac_data, packet.key_exchange_id)
+        hmac_data = concat(hmac_data, packet.key_exchange_id, packet.client_nonce)
+    elif packet.header.type == PACKET_TYPE_SYN_ACK:
+        hmac_data = concat(hmac_data, packet.key_exchange_id, packet.server_nonce, packet.client_nonce_echo)
     elif packet.header.type == PACKET_TYPE_CONTROL:
         if packet.header.sub_type == CONTROL_SUB_TIME_SYNC_REQUEST:
             hmac_data = concat(hmac_data, packet.challenge_nonce)

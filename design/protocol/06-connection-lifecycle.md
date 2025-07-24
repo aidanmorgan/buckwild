@@ -45,6 +45,9 @@ session_state = {
     'header_config': 0x71,                      // Version byte encoding (32-bit ID + 24-bit TS)
     'session_key': None,
     'daily_key': None,
+    'client_nonce': None,                       // Client's nonce for replay protection
+    'server_nonce': None,                       // Server's nonce for replay protection
+    'server_challenge': None,                   // Server's challenge for challenge-response
     
     // ECDH key exchange state
     'ecdh_keypair': None,
@@ -301,6 +304,47 @@ The session initialization process is designed to handle connection establishmen
 
 4. **Transition to Session-Specific Hopping**: After connection establishment completes, all subsequent communication uses the per-session derived port parameters, providing unique port sequences for each connection to prevent collisions.
 
+### Session Configuration Negotiation
+
+Session configuration parameters (session ID length, timestamp configuration, HMAC policy) are negotiated during the SYN/SYN-ACK handshake using the version byte encoding in the packet header.
+
+```pseudocode
+function negotiate_session_configuration(local_preferences, peer_version_byte):
+    # Extract peer's configuration from version byte
+    peer_session_id_bits = (peer_version_byte >> 4) & 0x3
+    peer_timestamp_bits = (peer_version_byte >> 6) & 0x3
+    
+    # Determine compatible configuration (prefer security/efficiency balance)
+    negotiated_session_id = max(local_preferences.session_id_length, peer_session_id_bits)
+    negotiated_timestamp = max(local_preferences.timestamp_config, peer_timestamp_bits)
+    
+    # Validate configuration compatibility
+    if negotiated_session_id > SESSION_ID_64BIT or negotiated_timestamp > TIMESTAMP_32BIT:
+        return ERROR_INVALID_PARAMETER
+    
+    # Update session state with negotiated configuration
+    session_state.session_id_length = negotiated_session_id
+    session_state.timestamp_config = negotiated_timestamp
+    session_state.header_config = create_version_byte(negotiated_session_id, negotiated_timestamp)
+    
+    return SUCCESS
+
+function create_version_byte(session_id_config, timestamp_config):
+    # Create version byte encoding with negotiated configuration
+    version_byte = PROTOCOL_VERSION  # Bits 0-3: Protocol version
+    version_byte |= (session_id_config << 4)  # Bits 4-5: Session ID length
+    version_byte |= (timestamp_config << 6)   # Bits 6-7: Timestamp configuration
+    
+    return version_byte
+
+# Session ID Length Mismatch Handling:
+# - If peers have different preferred session ID lengths, use the larger size
+# - 16-bit + 32-bit → 32-bit session IDs
+# - 32-bit + 64-bit → 64-bit session IDs  
+# - Timestamp configuration follows same principle (larger timespan wins)
+# - Both peers must use the negotiated configuration for all subsequent packets
+```
+
 ### Client-Side Connection Establishment
 
 ```pseudocode
@@ -345,11 +389,25 @@ function establish_client_connection(remote_endpoint, local_psk_fingerprints):
     session_state.port_hop_seed = session_parameters.port_hop_seed
     session_state.time_offset = session_parameters.time_sync_offset
     
-    # Phase 4: Complete three-way handshake
-    if send_final_ack():
+    # Phase 4: Complete three-way handshake with challenge response
+    if send_final_ack_with_challenge_response():
         return transition_to_established()
     else:
         return transition_to_error_state(ERROR_CONNECTION_FAILED)
+
+function send_final_ack_with_challenge_response():
+    # Create ACK with challenge response
+    challenge_response = HMAC_SHA256_128(
+        session_state.session_key,
+        session_state.server_challenge || session_state.client_nonce || b"challenge_response_v1"
+    )
+    
+    ack_packet = create_ack_packet(
+        acknowledgment_number = session_state.receive_sequence + 1,
+        challenge_response = challenge_response
+    )
+    
+    return send_packet(ack_packet)
 
 function perform_ecdh_key_exchange(remote_endpoint, psk):
     # Generate ephemeral ECDH key pair
@@ -360,14 +418,35 @@ function perform_ecdh_key_exchange(remote_endpoint, psk):
     # Send SYN with ECDH public key and PSK authentication
     # NOTE: Initial connection establishment MUST use base port hopping algorithm
     # (no per-session offset) to ensure predictable connection establishment
-    psk_auth = HMAC_SHA256_128(psk, client_keypair.public || b"ecdh_syn_auth_v1")
+    client_nonce = generate_secure_random_128bit()
+    session_state.client_nonce = client_nonce
+    
+    # Create comprehensive HMAC covering all security-critical fields
+    syn_timestamp = get_current_timestamp_ms()
+    syn_sequence = generate_initial_sequence_number()
+    hmac_data = concat(
+        PACKET_TYPE_SYN,
+        syn_timestamp,
+        syn_sequence,
+        client_keypair.public,
+        client_nonce,
+        session_state.key_exchange_id,
+        INITIAL_CONGESTION_WINDOW,
+        INITIAL_RECEIVE_WINDOW,
+        b"ecdh_syn_auth_v1"
+    )
+    psk_auth = HMAC_SHA256_128(psk, hmac_data)
+    
     syn_packet = create_syn_packet(
         client_public_key = client_keypair.public,
+        client_nonce = client_nonce,
         psk_authentication = psk_auth,
         key_exchange_id = session_state.key_exchange_id,
         initial_congestion_window = INITIAL_CONGESTION_WINDOW,
         initial_receive_window = INITIAL_RECEIVE_WINDOW,
-        time_offset = calculate_time_offset()
+        time_offset = calculate_time_offset(),
+        timestamp = syn_timestamp,
+        sequence_number = syn_sequence
     )
     
     # Send SYN packet using base port algorithm (no session-specific offset yet)
@@ -390,9 +469,39 @@ function perform_ecdh_key_exchange(remote_endpoint, psk):
     if shared_secret == ERROR_INVALID_PUBLIC_KEY:
         return null
     
-    # Verify shared secret hash
-    if not verify_ecdh_shared_secret_hash(shared_secret, syn_ack.shared_secret_hash):
+    # Verify comprehensive shared secret hash
+    if not verify_ecdh_shared_secret_hash(
+        shared_secret,
+        session_state.client_nonce,
+        syn_ack.server_nonce,
+        syn_ack.server_challenge,
+        session_state.key_exchange_id,
+        syn_ack.shared_secret_hash
+    ):
         return null
+    
+    # Verify client nonce echo matches what we sent
+    if syn_ack.client_nonce_echo != session_state.client_nonce:
+        return null
+    
+    # Verify SYN-ACK authentication HMAC
+    syn_ack_hmac_data = concat(
+        PACKET_TYPE_SYN_ACK,
+        syn_ack.header.timestamp,
+        syn_ack.header.sequence_number,
+        syn_ack.server_public_key,
+        syn_ack.server_nonce,
+        syn_ack.server_challenge,
+        syn_ack.client_nonce_echo,
+        syn_ack.shared_secret_hash,
+        syn_ack.key_exchange_id,
+        b"ecdh_syn_ack_auth_v1"
+    )
+    if not verify_hmac(session_state.discovered_psk, syn_ack_hmac_data, syn_ack.authentication):
+        return null
+    
+    session_state.server_nonce = syn_ack.server_nonce
+    session_state.server_challenge = syn_ack.server_challenge
     
     # Store peer's public key and clear our private key for forward secrecy
     session_state.peer_public_key = syn_ack.server_public_key
@@ -424,14 +533,14 @@ function send_syn_packet_using_base_ports(syn_packet, remote_endpoint):
     unique_base_ports = list(dict.fromkeys(base_ports))
     
     # Send SYN to all possible base ports for connection establishment
-    syn_sent = false
+    is_syn_sent = false
     for port in unique_base_ports:
         syn_packet.destination_port = port
         if send_packet_to_port(syn_packet, remote_endpoint, port):
-            syn_sent = true
+            is_syn_sent = true
             log_syn_sent_to_base_port(port, current_time_window)
     
-    return syn_sent
+    return is_syn_sent
 
 function receive_syn_ack_across_base_ports(timeout_ms):
     # Listen for SYN-ACK across all base ports in adaptive delay window
@@ -479,11 +588,30 @@ function handle_server_connection_request(syn_packet):
     session_state.sub_state = RECOVERY_SUB_STATE_NORMAL
     session_state.connection_start_time = get_current_time()
     
-    # Verify PSK authentication
-    discovered_psk = verify_psk_authentication(syn_packet.psk_authentication, syn_packet.client_public_key)
+    # Verify PSK authentication with comprehensive field validation
+    hmac_data = concat(
+        PACKET_TYPE_SYN,
+        syn_packet.header.timestamp,
+        syn_packet.header.sequence_number,
+        syn_packet.client_public_key,
+        syn_packet.client_nonce,
+        syn_packet.key_exchange_id,
+        syn_packet.initial_congestion_window,
+        syn_packet.initial_receive_window,
+        b"ecdh_syn_auth_v1"
+    )
+    discovered_psk = verify_psk_authentication_comprehensive(syn_packet.psk_authentication, hmac_data)
     if discovered_psk == null:
         return send_error(ERROR_AUTHENTICATION_FAILED)
     session_state.discovered_psk = discovered_psk
+    session_state.client_nonce = syn_packet.client_nonce
+    
+    # Add to handshake replay cache
+    handshake_cache_key = generate_handshake_cache_key(syn_packet)
+    if handshake_cache_key in server_handshake_cache:
+        log_replay_attempt("handshake_replay_detected", syn_packet)
+        return send_error(ERROR_REPLAY_ATTACK)
+    server_handshake_cache.add(handshake_cache_key, get_current_time_ms())
     
     # Generate server ECDH key pair
     server_keypair = generate_ecdh_keypair()
@@ -511,15 +639,51 @@ function handle_server_connection_request(syn_packet):
     session_state.receive_sequence = session_parameters.client_sequence
     session_state.peer_public_key = syn_packet.client_public_key
     
-    # Send SYN-ACK with server's ECDH public key and verification
-    secret_hash = create_ecdh_verification_hash(shared_secret)
+    # Generate server challenge for challenge-response
+    server_nonce = generate_secure_random_128bit()
+    server_challenge = generate_secure_random_128bit()
+    session_state.server_nonce = server_nonce
+    session_state.server_challenge = server_challenge
+    
+    # Create comprehensive verification hash including all nonces and challenge
+    secret_hash = create_ecdh_verification_hash(
+        shared_secret,
+        syn_packet.client_nonce,
+        server_nonce,
+        server_challenge,
+        syn_packet.key_exchange_id
+    )
+    
+    # Create SYN-ACK with comprehensive HMAC
+    syn_ack_timestamp = get_current_timestamp_ms()
+    syn_ack_sequence = generate_initial_sequence_number()
+    syn_ack_hmac_data = concat(
+        PACKET_TYPE_SYN_ACK,
+        syn_ack_timestamp,
+        syn_ack_sequence,
+        server_keypair.public,
+        server_nonce,
+        server_challenge,
+        syn_packet.client_nonce,  # Echo client nonce
+        secret_hash,
+        syn_packet.key_exchange_id,
+        b"ecdh_syn_ack_auth_v1"
+    )
+    syn_ack_auth = HMAC_SHA256_128(session_state.discovered_psk, syn_ack_hmac_data)
+    
     syn_ack = create_syn_ack_packet(
         server_public_key = server_keypair.public,
+        server_nonce = server_nonce,
+        server_challenge = server_challenge,
+        client_nonce_echo = syn_packet.client_nonce,
         shared_secret_hash = secret_hash,
         key_exchange_id = syn_packet.key_exchange_id,
         initial_congestion_window = INITIAL_CONGESTION_WINDOW,
         initial_receive_window = INITIAL_RECEIVE_WINDOW,
-        time_offset = calculate_time_offset()
+        time_offset = calculate_time_offset(),
+        timestamp = syn_ack_timestamp,
+        sequence_number = syn_ack_sequence,
+        authentication = syn_ack_auth
     )
     
     if not send_packet(syn_ack):
@@ -528,9 +692,22 @@ function handle_server_connection_request(syn_packet):
     # Clear server private key for forward secrecy
     secure_zero_memory(server_keypair.private)
     
-    # Wait for final ACK
+    # Wait for final ACK with challenge response
     ack_packet = receive_packet_timeout(CONNECTION_TIMEOUT_MS)
     if ack_packet != null and ack_packet.type == PACKET_TYPE_ACK:
+        # Verify challenge response
+        expected_response = HMAC_SHA256_128(
+            session_state.session_key,
+            session_state.server_challenge || session_state.client_nonce || b"challenge_response_v1"
+        )
+        if ack_packet.challenge_response != expected_response:
+            log_security_event("invalid_challenge_response", ack_packet)
+            return transition_to_error_state(ERROR_AUTHENTICATION_FAILED)
+        
+        # Clean up handshake state
+        secure_zero_memory(session_state.server_challenge)
+        session_state.server_challenge = None
+        
         return transition_to_established()
     else:
         return transition_to_error_state(ERROR_CONNECTION_TIMEOUT)

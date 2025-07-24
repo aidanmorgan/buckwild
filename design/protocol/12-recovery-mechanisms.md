@@ -1,23 +1,23 @@
 # Multi-Layer Recovery Mechanisms
 
-This document specifies the comprehensive recovery mechanisms that enable the protocol to handle various failure scenarios and maintain session continuity without requiring complete connection re-establishment.
+This document specifies the recovery mechanisms that enable the protocol to handle failure scenarios and maintain session continuity without requiring complete connection re-establishment.
 
 ## Overview
 
-The recovery system provides multiple layers of resilience against network issues and synchronization problems. It uses a graduated escalation approach where failures at one level trigger the next recovery mechanism, ensuring exhaustive recovery attempts while maintaining security properties.
+The recovery system provides multiple layers of resilience against network issues and synchronization problems. It uses a graduated escalation approach where failures at one level trigger the next recovery mechanism, ensuring recovery attempts while maintaining security properties.
 
 ## Purpose and Rationale
 
 The recovery system serves critical reliability and security functions:
 
-- **Session Continuity**: Maintains active sessions despite temporary network issues or synchronization problems
+- **Session Continuity**: Maintains active sessions despite network issues or synchronization problems
 - **Security Preservation**: Enables recovery while maintaining cryptographic security properties and session integrity
-- **Multi-Layer Defense**: Provides graduated recovery responses appropriate to different failure types and severities
-- **Performance Optimization**: Avoids expensive session re-establishment when targeted recovery can resolve issues
-- **Attack Resilience**: Maintains security even when recovery is triggered by potential attacks or tampering
-- **Systematic Escalation**: Ensures all recovery options are exhausted before session termination
+- **Multi-Layer Defense**: Provides graduated recovery responses for different failure types and severities
+- **Performance Optimization**: Avoids expensive session re-establishment when targeted recovery resolves issues
+- **Attack Resilience**: Maintains security when recovery is triggered by attacks or tampering
+- **Systematic Escalation**: Exhausts all recovery options before session termination
 
-The recovery framework uses cryptographic proofs and validation to ensure that recovery operations cannot be exploited to compromise session security or enable unauthorized access.
+The recovery framework uses cryptographic proofs and validation to prevent recovery operations from compromising session security or enabling unauthorized access.
 
 ## Key Concepts
 
@@ -368,7 +368,13 @@ function execute_ecdh_rekey_recovery():
     )
     
     # Step 6: Verify shared secret hash for mutual authentication
-    expected_secret_hash = create_ecdh_verification_hash(rekey_shared_secret)
+    expected_secret_hash = create_ecdh_verification_hash(
+        rekey_shared_secret,
+        session_state.client_nonce,
+        session_state.server_nonce, 
+        session_state.server_challenge,
+        rekey_id
+    )
     if not constant_time_compare(rekey_response.shared_secret_hash, expected_secret_hash):
         record_failure_condition("rekey_shared_secret_mismatch", "Hash verification failed")
         return ERROR_REKEY_SHARED_SECRET_MISMATCH
@@ -395,10 +401,17 @@ function execute_ecdh_rekey_recovery():
     clear_recovery_state()
     return SUCCESS
 
-function create_ecdh_verification_hash(shared_secret):
-    # Create verification hash of shared secret for mutual authentication
-    hash_input = shared_secret + b"ecdh_rekey_verification_v1"
-    return SHA256(hash_input)
+function create_ecdh_verification_hash(shared_secret, client_nonce, server_nonce, server_challenge, key_exchange_id):
+    # Create comprehensive verification hash including all nonces and challenge
+    hash_data = concat(
+        shared_secret,
+        client_nonce,
+        server_nonce,
+        server_challenge,
+        key_exchange_id,
+        b"ecdh_rekey_verification_v1"
+    )
+    return SHA256(hash_data)
 ```
 
 ## Recovery Coordination and Escalation
@@ -579,7 +592,13 @@ function process_rekey_request(rekey_request):
         return ERROR_REKEY_INVALID_KEY
     
     # Create verification hash
-    secret_hash = create_ecdh_verification_hash(shared_secret)
+    secret_hash = create_ecdh_verification_hash(
+        shared_secret,
+        session_state.client_nonce,
+        session_state.server_nonce,
+        session_state.server_challenge, 
+        rekey_request.rekey_id
+    )
     
     # Create response
     rekey_response = create_management_packet(

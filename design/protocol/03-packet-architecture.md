@@ -10,42 +10,36 @@ The packet format provides optimized data structures for network communication b
 
 - **Adaptive Header Size**: Variable session ID, timestamp, and HMAC sizes based on deployment requirements
 - **Month-Based Timestamps**: Compressed timestamps using milliseconds since current month start
-- **Tiered Authentication**: Different HMAC levels for different packet types and intervals
+- **HMAC Policy Framework**: Three authentication policies (LIGHT, MEDIUM, STRONG) for different security requirements
 - **Deployment Flexibility**: Configurable for everything from IoT devices to enterprise infrastructure
 
 ## Packet Type Definitions
 
-```pseudocode
-// Core packet types
-PACKET_TYPE_SYN = 0x01                  // Connection establishment
-PACKET_TYPE_SYN_ACK = 0x02              // Connection establishment response
-PACKET_TYPE_ACK = 0x03                  // Acknowledgment (includes WINDOW_UPDATE and SACK)
-PACKET_TYPE_DATA = 0x04                 // Data packet (includes FRAGMENT functionality)
-PACKET_TYPE_FIN = 0x05                  // Connection termination
-PACKET_TYPE_HEARTBEAT = 0x06            // Keep-alive packet
-PACKET_TYPE_ERROR = 0x09                // Error packet
-PACKET_TYPE_RST = 0x0B                  // Reset connection
-PACKET_TYPE_CONTROL = 0x0C              // Control operations (TIME_SYNC, RECOVERY, etc.)
-PACKET_TYPE_MANAGEMENT = 0x0D           // Management operations (REKEY, REPAIR)
-PACKET_TYPE_DISCOVERY = 0x0E            // PSK discovery with sub-types
+All packet types and sub-types are defined in 02-core-definitions.md:
 
-// CONTROL packet sub-types
-CONTROL_SUB_TIME_SYNC_REQUEST = 0x01    // Time synchronization request
-CONTROL_SUB_TIME_SYNC_RESPONSE = 0x02   // Time synchronization response
-CONTROL_SUB_RECOVERY = 0x03             // Session recovery
-CONTROL_SUB_SEQUENCE_NEG = 0x04         // Sequence number negotiation
+**Core packet types:**
+- PACKET_TYPE_SYN = 0x01 (Connection establishment)
+- PACKET_TYPE_SYN_ACK = 0x02 (Connection establishment response)
+- PACKET_TYPE_ACK = 0x03 (Acknowledgment, includes WINDOW_UPDATE and SACK)
+- PACKET_TYPE_DATA = 0x04 (Data packet, includes FRAGMENT functionality)
+- PACKET_TYPE_FIN = 0x05 (Connection termination)
+- PACKET_TYPE_HEARTBEAT = 0x06 (Keep-alive packet)
+- PACKET_TYPE_ERROR = 0x09 (Error packet)
+- PACKET_TYPE_RST = 0x0B (Reset connection)
+- PACKET_TYPE_CONTROL = 0x0C (Control operations)
+- PACKET_TYPE_MANAGEMENT = 0x0D (Management operations)
+- PACKET_TYPE_DISCOVERY = 0x0E (PSK discovery with sub-types)
 
-// MANAGEMENT packet sub-types
-MANAGEMENT_SUB_REKEY_REQUEST = 0x01     // Session key rotation request
-MANAGEMENT_SUB_REKEY_RESPONSE = 0x02    // Session key rotation response
-MANAGEMENT_SUB_REPAIR_REQUEST = 0x03    // Sequence repair request
-MANAGEMENT_SUB_REPAIR_RESPONSE = 0x04   // Sequence repair response
+**CONTROL packet sub-types:**
+- CONTROL_SUB_TIME_SYNC_REQUEST = 0x01, CONTROL_SUB_TIME_SYNC_RESPONSE = 0x02
+- CONTROL_SUB_RECOVERY = 0x03, CONTROL_SUB_SEQUENCE_NEG = 0x04
 
-// DISCOVERY packet sub-types
-DISCOVERY_SUB_REQUEST = 0x01            // PSK discovery request
-DISCOVERY_SUB_RESPONSE = 0x02           // PSK discovery response
-DISCOVERY_SUB_CONFIRM = 0x03            // PSK discovery confirmation
-```
+**MANAGEMENT packet sub-types:**
+- MANAGEMENT_SUB_REKEY_REQUEST = 0x01, MANAGEMENT_SUB_REKEY_RESPONSE = 0x02
+- MANAGEMENT_SUB_REPAIR_REQUEST = 0x03, MANAGEMENT_SUB_REPAIR_RESPONSE = 0x04
+
+**DISCOVERY packet sub-types:**
+- DISCOVERY_SUB_REQUEST = 0x01, DISCOVERY_SUB_RESPONSE = 0x02, DISCOVERY_SUB_CONFIRM = 0x03
 
 ## Adaptive Header Format
 
@@ -96,8 +90,8 @@ Adaptive Common Header Structure (Big-Endian):
 +-----------------------------------+
 |    Payload Length (16-bit)       |
 +-----------------------------------+
-|   HMAC (Variable: 4-16 bytes)   |
-|  Based on packet type and policy  |
+|   HMAC (Variable: 8-32 bytes)   |
+|  LIGHT=8, MEDIUM=16, STRONG=32   |
 +-----------------------------------+
 
 Field Definitions:
@@ -116,7 +110,7 @@ Field Definitions:
 - Session ID (Variable): Unique session identifier (big-endian)
 - Sequence Number (32-bit): Packet sequence number (big-endian)
 - Acknowledgment Number (32-bit): Next expected sequence (big-endian, 0 if not applicable)
-- Timestamp (Variable): For base port hopping (connection establishment): milliseconds since UTC midnight of current day, divided by 500ms for bucket calculation. For session packets: milliseconds since UTC midnight of current month (big-endian)
+- Timestamp (Variable): Dual epoch system as defined in 09-time-synchronization.md - Base port hopping uses daily epochs (500ms buckets since UTC midnight of current day), session packets use monthly epochs (500ms buckets since UTC midnight of current month) (big-endian)
 - Payload Length (16-bit): Length of payload data in bytes (big-endian)
 - HMAC (Variable): Authentication hash using session key (big-endian)
 ```
@@ -124,12 +118,12 @@ Field Definitions:
 ### Header Size Examples
 
 ```
-Configuration Examples:
-Ultra-compact:  23 bytes (16-bit ID + 16-bit TS + 32-bit HMAC)
-Compact:        24 bytes (16-bit ID + 24-bit TS + 32-bit HMAC)
-Standard:       26 bytes (32-bit ID + 24-bit TS + 32-bit HMAC) 
-Secure:         30 bytes (32-bit ID + 24-bit TS + 64-bit HMAC)
-Long-lived:     45 bytes (64-bit ID + 32-bit TS + 128-bit HMAC)
+Configuration Examples (Base header: 18 bytes as defined in 02-core-definitions.md + variable fields):
+Ultra-compact:  26 bytes (18 + 2-byte ID + 2-byte TS + 4-byte HMAC)
+Compact:        29 bytes (18 + 2-byte ID + 3-byte TS + 4-byte HMAC)
+Standard:       31 bytes (18 + 4-byte ID + 3-byte TS + 4-byte HMAC) 
+Secure:         35 bytes (18 + 4-byte ID + 3-byte TS + 8-byte HMAC)
+Long-lived:     46 bytes (18 + 8-byte ID + 4-byte TS + 16-byte HMAC)
 ```
 
 ## HMAC Policy
@@ -149,7 +143,7 @@ PACKET_CLASS_CONTROL:    // Strong HMAC minimum (64-bit)
 - TIME_SYNC, RECOVERY operations
 - REPAIR operations
 
-PACKET_CLASS_DATA:       // Adaptive HMAC (32-bit default)
+PACKET_CLASS_DATA:       // Adaptive HMAC (64-bit/8-byte default)
 - DATA packets between full HMAC intervals
 - ACK packets for data
 ```
@@ -160,13 +154,19 @@ PACKET_CLASS_DATA:       // Adaptive HMAC (32-bit default)
 HMAC Selection Algorithm:
 1. Critical packets: Always use HMAC_FULL (128-bit)
 2. Control packets: Use HMAC_STRONG (64-bit) minimum
-3. Data packets: Use HMAC_LIGHT (32-bit) with periodic full verification
+3. Data packets: Use HMAC_LIGHT (64-bit/8-byte) with periodic full verification
 
-Periodic Full HMAC Triggers:
-- Every 100 data packets
-- Every 5 seconds of activity
-- After any HMAC verification failure
-- During month boundary transitions
+Periodic Full HMAC Triggers (coordinated between peers):
+- Every 100 data packets (both peers count independently)
+- Every 5 seconds of activity (synchronized using protocol timestamps)
+- After any HMAC verification failure (triggered by receiving peer)
+- During month boundary transitions (synchronized using UTC month boundaries)
+
+Peer Coordination:
+- Peers maintain independent packet counters for the 100-packet trigger
+- Time-based triggers use protocol timestamps to ensure synchronization
+- HMAC failure triggers cause the receiving peer to require full HMAC on subsequent packets
+- Both peers automatically use full HMAC during month boundary transition periods
 ```
 
 ## Conditional Fields
@@ -250,6 +250,29 @@ Month Boundary Transition (Session Packets):
 5. Reset timestamp epoch to new month start
 ```
 
+### Anti-Replay Timestamp Validation
+
+All packet timestamps are validated against the TIMESTAMP_WINDOW_MS (30-second) sliding window to prevent replay attacks:
+
+```pseudocode
+Timestamp Validation Process:
+1. Extract timestamp from packet header (milliseconds since month start)
+2. Calculate packet age: current_time - (month_start + packet_timestamp)
+3. Reject if packet_age > TIMESTAMP_WINDOW_MS (30 seconds)
+4. Reject if packet_age < -TIME_SYNC_TOLERANCE_MS (more than 50ms future)
+5. Check for duplicate timestamp+session+sequence combination
+6. Accept out-of-order packets within window if not duplicates
+7. Add to timestamp cache for duplicate detection
+8. Periodically cleanup expired cache entries
+
+Security Properties:
+- Prevents replay of packets older than 30 seconds
+- Handles legitimate network reordering within window
+- Detects duplicate packets through multi-attribute keys
+- Resists clock skew attacks with future timestamp limits
+- Maintains cache efficiency through periodic cleanup
+```
+
 ## Session ID Management
 
 ### Adaptive Session ID Length
@@ -276,7 +299,7 @@ iot_config = {
     session_id: SESSION_ID_16BIT,
     timestamp: TIMESTAMP_16BIT,     // 1.09 minutes max
     hmac_default: HMAC_LIGHT,
-    header_size: 23 bytes         
+    header_size: 28 bytes          // 18 + 2 + 2 + 8 (HMAC_LIGHT)
 }
 
 // Standard Enterprise  
@@ -284,7 +307,7 @@ standard_config = {
     session_id: SESSION_ID_32BIT,
     timestamp: TIMESTAMP_24BIT,     // 4.66 hours max
     hmac_default: HMAC_LIGHT,
-    header_size: 26 bytes          
+    header_size: 33 bytes          // 18 + 4 + 3 + 8 (HMAC_LIGHT)
 }
 
 // High Security
@@ -292,15 +315,15 @@ secure_config = {
     session_id: SESSION_ID_32BIT,
     timestamp: TIMESTAMP_24BIT,     // 4.66 hours max
     hmac_default: HMAC_STRONG,
-    header_size: 30 bytes          
+    header_size: 57 bytes          // 18 + 4 + 3 + 32 (HMAC_STRONG)
 }
 
 // Infrastructure (long-lived)
 infrastructure_config = {
     session_id: SESSION_ID_64BIT,
     timestamp: TIMESTAMP_32BIT,     // Full month max
-    hmac_default: HMAC_FULL,
-    header_size: 45 bytes          
+    hmac_default: HMAC_MEDIUM,
+    header_size: 46 bytes          // 18 + 8 + 4 + 16 (HMAC_MEDIUM)
 }
 ```
 
@@ -329,8 +352,8 @@ SYN Packet Structure (Big-Endian):
 +-----------------------------------+
 |    Payload Length (16-bit)       |
 +-----------------------------------+
-|      HMAC (128-bit - Full)       |
-|                                 |
+|      HMAC (HMAC_STRONG)         |
+|           (32 bytes)             |
 +-----------------------------------+
 |    Client ECDH Public Key        |
 |         (P-256 Point)            |
@@ -392,8 +415,8 @@ SYN-ACK Packet Structure (Big-Endian):
 +-----------------------------------+
 |    Payload Length (16-bit)       |
 +-----------------------------------+
-|      HMAC (128-bit - Full)       |
-|                                 |
+|      HMAC (HMAC_STRONG)         |
+|           (32 bytes)             |
 +-----------------------------------+
 |    Server ECDH Public Key        |
 |         (P-256 Point)            |
@@ -556,8 +579,8 @@ FIN Packet Structure (Big-Endian):
 +-----------------------------------+
 |    Payload Length (16-bit)       |
 +-----------------------------------+
-|      HMAC (128-bit - Full)       |
-|                                 |
+|      HMAC (HMAC_STRONG)         |
+|           (32 bytes)             |
 +-----------------------------------+
 |    Final Sequence Number         |
 +-----------------------------------+
@@ -846,8 +869,8 @@ DISCOVERY Packet Structure (Big-Endian):
 +-----------------------------------+
 |    Payload Length (16-bit)       |
 +-----------------------------------+
-|      HMAC (128-bit - Full)       |
-|                                 |
+|      HMAC (HMAC_STRONG)         |
+|           (32 bytes)             |
 +-----------------------------------+
 |       Discovery Payload          |
 |        (Variable Length)         |
@@ -927,4 +950,72 @@ The negotiated configuration includes:
 - Timestamp size (16-bit, 24-bit, or 32-bit)  
 - HMAC policy (based on security requirements)
 
-This ensures optimal efficiency for each deployment scenario while maintaining protocol compatibility.
+This provides optimal efficiency for each deployment scenario while maintaining protocol compatibility.
+
+## HMAC Policy Framework
+
+The protocol uses three HMAC policies balancing security and performance requirements across packet types and connection states. Each policy defines cryptographic parameters and authentication scope.
+
+### HMAC Policy Definitions
+
+**HMAC_LIGHT (Policy 1):**
+- Algorithm: HMAC-SHA256 truncated to 64 bits
+- Key Length: 128 bits (16 bytes)
+- Output Length: 64 bits (8 bytes)
+- Authenticated Components: Type, sub-type, session ID, sequence, timestamp, payload
+- Use Case: High-frequency packets requiring performance optimization
+
+**HMAC_MEDIUM (Policy 2):**
+- Algorithm: HMAC-SHA256 truncated to 128 bits
+- Key Length: 256 bits (32 bytes) 
+- Output Length: 128 bits (16 bytes)
+- Authenticated Components: All header fields and payload
+- Use Case: Standard authentication for most packet types
+
+**HMAC_STRONG (Policy 3):**
+- Algorithm: HMAC-SHA512 truncated to 256 bits
+- Key Length: 512 bits (64 bytes)
+- Output Length: 256 bits (32 bytes)
+- Authenticated Components: Full header, payload, and connection context hash
+- Use Case: Security-critical operations and high-security deployments
+
+### HMAC Policy Application Guidelines
+
+**Connection Establishment:**
+- SYN packets: HMAC_STRONG (security-critical)
+- SYN-ACK packets: HMAC_STRONG (security-critical)
+- ACK packets (handshake): HMAC_MEDIUM (completion)
+
+**Control Packets:**
+- Time synchronization: HMAC_MEDIUM (important for port hopping)
+- Heartbeat: HMAC_LIGHT (high frequency, low security impact)
+- Port hopping coordination: HMAC_MEDIUM (security-relevant)
+
+**Management Packets:**
+- Recovery requests: HMAC_STRONG (session continuity critical)
+- Error packets: HMAC_MEDIUM (important for debugging)
+- Flow control: HMAC_LIGHT (high frequency, performance-sensitive)
+
+**Discovery Packets:**
+- PSK discovery: HMAC_STRONG (prevents PSK enumeration attacks)
+- Discovery response: HMAC_STRONG (confirms PSK match)
+
+**Data Packets:**
+- Regular data: HMAC_LIGHT (default) or HMAC_MEDIUM (configurable)
+- Fragmented data: HMAC_MEDIUM (fragmentation adds complexity)
+- Priority data: HMAC_MEDIUM (higher importance)
+
+**Special Circumstances:**
+- Recovery mode: All operations use HMAC_STRONG
+- High security mode: All packets use HMAC_STRONG
+- Performance mode: HMAC_LIGHT for all except connection establishment
+
+### Security Mode Configuration
+
+HMAC policy selection is controlled by deployment security mode:
+
+- **SECURITY_MODE_PERFORMANCE**: Use HMAC_LIGHT where possible
+- **SECURITY_MODE_BALANCED**: Use standard policy guidelines (default)  
+- **SECURITY_MODE_HIGH_SECURITY**: Use HMAC_STRONG for all operations
+
+This framework provides appropriate authentication strength while maintaining performance efficiency across deployment scenarios.

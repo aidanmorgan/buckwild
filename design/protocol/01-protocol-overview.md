@@ -38,9 +38,9 @@ This document defines a complete specification for connection management and syn
 
 **⚠️ DO NOT USE THIS PROTOCOL IN THE REAL WORLD - IT IS PURELY FOR LEARNING PURPOSES ⚠️**
 
-This document defines a complete specification for connection establishment, port hopping synchronization, and recovery mechanisms in frequency hopping network systems. The protocol ensures reliable communication while maintaining synchronized port transitions between endpoints using ephemeral Diffie-Hellman key exchange, privacy-preserving PSK discovery, and cryptographically derived parameters.
+This document defines a complete specification for connection establishment, port hopping synchronization, and recovery mechanisms in frequency hopping network systems. The protocol provides reliable communication with synchronized port transitions between endpoints using ephemeral Diffie-Hellman key exchange, privacy-preserving PSK discovery, and cryptographically derived parameters.
 
-The specification includes comprehensive mechanisms for congestion control, flow control, fragmentation, cryptographic operations, and recovery procedures to handle various failure scenarios with perfect forward secrecy.
+The specification includes congestion control, flow control, fragmentation, cryptographic operations, and recovery procedures for failure scenarios with perfect forward secrecy.
 
 ## License
 
@@ -54,35 +54,35 @@ The protocol is designed with the following key objectives:
 - **Perfect Forward Secrecy**: All connections use ephemeral Diffie-Hellman key exchange providing forward secrecy
 - **Privacy-Preserving PSK Discovery**: Hash-based set intersection enables PSK discovery without revealing non-shared keys
 - **Port Hopping Obfuscation**: Frequent port transitions make traffic analysis and connection tracking difficult
-- **Anti-Replay Protection**: Comprehensive timestamp and sequence number validation prevents replay attacks
+- **Anti-Replay Protection**: Timestamp and sequence number validation prevents replay attacks
 - **Cryptographic Parameter Derivation**: All session parameters derived from ECDH shared secrets using PBKDF2
 - **Zero Data Exposure**: All sensitive exchanges use ECDH to prevent information leakage
 
 ### Reliability and Robustness
-- **Comprehensive Recovery Mechanisms**: Multiple recovery strategies handle various failure scenarios including time desynchronization, sequence number conflicts, and network partitions
-- **Adaptive Flow Control**: Dynamic window management optimizes throughput while preventing congestion
-- **Fragmentation Support**: Large packets are fragmented and reassembled reliably
-- **Timeout and Retry Logic**: Robust timeout handling with exponential backoff and maximum retry limits
+- **Recovery Mechanisms**: Multiple recovery strategies handle time desynchronization, sequence number conflicts, and network partitions
+- **Flow Control**: Dynamic window management optimizes throughput and prevents congestion
+- **Fragmentation**: Large packets are fragmented and reassembled
+- **Timeout Handling**: Exponential backoff with maximum retry limits
 
 ### Performance and Efficiency
 - **Adaptive Header Format**: Variable session ID, timestamp, and HMAC sizes reduce overhead by up to 54% (23-45 bytes vs 50 bytes)
 - **Month-Based Timestamps**: Compressed timestamps using milliseconds since current month start
-- **Tiered Authentication**: Different HMAC levels for different packet types (32-bit, 64-bit, 128-bit)
+- **Tiered Authentication**: Different HMAC levels for different packet types (64-bit, 128-bit, 256-bit)
 - **Deployment Flexibility**: Configurable for IoT devices to enterprise infrastructure
-- **Adaptive Delay Tuning**: Dynamic adjustment of transmission delays based on network conditions
-- **Congestion Control**: TCP-compatible congestion control algorithms ensure fair network utilization
+- **Adaptive Delay Tuning**: Dynamic transmission delay adjustment based on network conditions
+- **Congestion Control**: TCP-compatible congestion control algorithms for fair network utilization
 - **Selective Acknowledgment**: Efficient acknowledgment of out-of-order packets
-- **Optimized Packet Formats**: Compact packet headers minimize overhead
+- **Compact Packet Formats**: Minimized header overhead
 
 ### Synchronization and Coordination
-- **Time Synchronization**: Precise time coordination between endpoints enables reliable port hopping
-- **Multiple Connection Support**: Collision avoidance mechanisms allow multiple parallel connections
+- **Time Synchronization**: Precise time coordination between endpoints for reliable port hopping
+- **Multiple Connection Support**: Collision avoidance mechanisms for multiple parallel connections
 - **Port Transition Coordination**: Synchronized port changes maintain connectivity during hops
 - **Emergency Recovery**: Fail-safe mechanisms restore connectivity when normal operations fail
 
 ## Cryptographic Key Management
 
-The protocol employs a sophisticated multi-layered key management system designed to provide perfect forward secrecy, session isolation, and temporal key separation. All cryptographic keys serve specific purposes with clearly defined lifetimes and security properties.
+The protocol uses a multi-layered key management system providing perfect forward secrecy, session isolation, and temporal key separation. All cryptographic keys serve specific purposes with defined lifetimes and security properties.
 
 ### Key Hierarchy and Relationships
 

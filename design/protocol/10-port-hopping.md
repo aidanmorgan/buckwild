@@ -195,22 +195,22 @@ function derive_daily_key(psk, current_utc_date):
     return daily_key
 
 function calculate_port_for_time_window(port_params, time_window):
-    # Calculate port using simplified algorithm - full port range available
-    # Combines time window with session-specific port seed for maximum distribution
+    # Calculate session port using session-specific parameters (consistent with base port algorithm)
+    # Uses session key material and time window for port calculation
     
-    # Combine time window and port seed for this hop
-    combined_seed = (time_window * 0x9E3779B9) ^ port_params.port_seed  # Golden ratio multiplier
+    # Convert time window to bytes (8 bytes for consistency)
+    time_window_bytes = time_window.to_bytes(8, 'big')
     
-    # Apply hop sequence modification
-    hop_modifier = (port_params.hop_sequence_seed >> (time_window % 16)) & 0xFFFF
-    final_seed = combined_seed ^ hop_modifier
+    # Use session-specific key material with time window
+    port_input = time_window_bytes + port_params.port_seed.to_bytes(32, 'big')
+    hmac_result = HMAC_SHA256(port_params.session_key, port_input + b"session_port_v2")
     
-    # Calculate port within full available range
-    port_value = final_seed % PORT_RANGE
-    final_port = MIN_PORT + port_value
+    # Extract port value from HMAC (use first 4 bytes for good distribution)
+    port_value = bytes_to_uint32(hmac_result[0:4])
+    port_range = MAX_PORT - MIN_PORT + 1
+    session_port = MIN_PORT + (port_value % port_range)
     
-    # Ensure port is within valid range (should always be true with proper modulo)
-    return max(MIN_PORT, min(final_port, MAX_PORT))
+    return session_port
 
 function get_current_session_port(port_params):
     # Get the current port using simplified calculation

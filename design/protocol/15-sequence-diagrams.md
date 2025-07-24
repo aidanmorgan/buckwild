@@ -191,18 +191,19 @@ sequenceDiagram
     participant Peer A
     participant Peer B
     
-    Note over Peer A,Peer B: Time Window N (Port 52432)
+    Note over Peer A,Peer B: Established Session - Monthly Epoch Hopping
+    Note over Peer A,Peer B: Current month epoch, time window N (Port 52432)
     Peer A->>Peer B: DATA (via port 52432)
     Peer B->>Peer A: ACK (via port 52432)
     
     Note over Peer A,Peer B: 500ms Time Window Boundary
-    Note over Peer A,Peer B: Both peers calculate new port
-    Note over Peer A,Peer B: Time Window N+1 (Port 57891)
+    Note over Peer A,Peer B: Both peers calculate new port using ECDH-derived parameters
+    Note over Peer A,Peer B: Time window N+1 (Port 57891)
     
     Peer A->>Peer B: DATA (via port 57891)
     Peer B->>Peer A: ACK (via port 57891)
     
-    Note over Peer A,Peer B: Synchronized port hopping continues
+    Note over Peer A,Peer B: Session-specific synchronized port hopping continues
 ```
 
 ### 3.2 Time Synchronization Exchange
@@ -1003,39 +1004,39 @@ sequenceDiagram
     Note over Client A,Server,Client B: Both connections established
 ```
 
-### 16.2 HMAC Policy Negotiation and Escalation
+### 16.2 Authentication Failure Recovery and Session Rekey
 
 ```mermaid
 sequenceDiagram
     participant Peer A
     participant Peer B
     
-    Note over Peer A,Peer B: Initial connection with HMAC_LIGHT (32-bit)
+    Note over Peer A,Peer B: Initial connection with HMAC_LIGHT (64-bit/8-byte)
     
-    Peer A->>Peer B: DATA (Type 0x04, 32-bit HMAC)
+    Peer A->>Peer B: DATA (Type 0x04, 64-bit HMAC)
     Note right of Peer A: HMAC failure 1
     
     Note over Peer B: HMAC validation fails
     Peer B->>Peer A: ERROR (Type 0x09)
-    Note left of Peer B: - Auth failure count: 1<br/>- Continue with HMAC_LIGHT
+    Note left of Peer B: - Auth failure count: 1<br/>- Continue with HMAC_LIGHT (64-bit)
     
-    Peer A->>Peer B: DATA (Type 0x04, 32-bit HMAC)
+    Peer A->>Peer B: DATA (Type 0x04, 64-bit HMAC)
     Note right of Peer A: HMAC failure 2
     
     Peer B->>Peer A: ERROR (Type 0x09)
     Note left of Peer B: - Auth failure count: 2<br/>- Threshold approaching
     
-    Peer A->>Peer B: DATA (Type 0x04, 32-bit HMAC)
+    Peer A->>Peer B: DATA (Type 0x04, 64-bit HMAC)
     Note right of Peer A: HMAC failure 3
     
     Note over Peer B: Authentication failure threshold exceeded
-    Note over Peer B: Escalate to HMAC_STRONG (64-bit)
+    Note over Peer B: Escalate recovery to session rekey level
     
-    Peer B->>Peer A: CONTROL (Type 0x0C, Sub HMAC_POLICY_CHANGE)
-    Note left of Peer B: - Request HMAC escalation<br/>- New policy: HMAC_STRONG<br/>- Security enhancement
+    Peer B->>Peer A: MANAGEMENT (Type 0x0D, Sub REKEY_REQUEST 0x01)
+    Note left of Peer B: - Initiate session rekey<br/>- ECDH key exchange<br/>- Security enhancement
     
-    Peer A->>Peer B: CONTROL (Type 0x0C, Sub HMAC_POLICY_ACK)
-    Note right of Peer A: - Acknowledge policy change<br/>- Switch to 64-bit HMAC
+    Peer A->>Peer B: MANAGEMENT (Type 0x0D, Sub REKEY_RESPONSE 0x02)
+    Note right of Peer A: - Complete ECDH exchange<br/>- New session keys derived
     
     Peer A->>Peer B: DATA (Type 0x04, 64-bit HMAC)
     Note right of Peer A: First packet with stronger HMAC

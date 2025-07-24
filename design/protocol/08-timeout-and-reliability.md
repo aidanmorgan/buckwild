@@ -592,4 +592,60 @@ function optimize_timeout_parameters():
         if optimization.confidence > 0.8:  # High confidence in suggestion
             apply_timeout_optimization(optimization)
             log_timeout_optimization(optimization)
+
+## Anti-Replay Timeout Integration
+
+The timeout system integrates with anti-replay protection to ensure security while maintaining performance:
+
+### Timestamp Window Timeout
+
+```pseudocode
+// Anti-replay timestamp validation timeout
+# TIMESTAMP_WINDOW_MS = 30000              // Defined in 02-core-definitions.md
+
+function validate_packet_timestamp_timeout(packet):
+    # Validate packet timestamp against anti-replay window
+    current_time = get_current_time_ms()
+    packet_timestamp = packet.header.timestamp
+    
+    # Calculate packet age using month-based epoch
+    month_start = get_current_month_start_utc()
+    packet_age = current_time - (month_start + packet_timestamp)
+    
+    # Apply TIMESTAMP_WINDOW_MS timeout
+    if packet_age > TIMESTAMP_WINDOW_MS:
+        # Packet older than 30 seconds - likely replay attack
+        log_timeout_event("timestamp_replay_detected", packet_age)
+        return ERROR_TIMESTAMP_INVALID
+    
+    # Check for future timestamps (clock skew tolerance)
+    if packet_age < -TIME_SYNC_TOLERANCE_MS:
+        log_timeout_event("timestamp_future_detected", packet_age)
+        return ERROR_TIMESTAMP_INVALID
+    
+    return SUCCESS
+
+function cleanup_expired_timestamp_cache():
+    # Periodic cleanup of timestamp cache using TIMESTAMP_WINDOW_MS
+    current_time = get_current_time_ms()
+    cutoff_time = current_time - TIMESTAMP_WINDOW_MS
+    
+    # Remove expired entries to prevent memory exhaustion
+    expired_count = timestamp_cache.remove_older_than(cutoff_time)
+    
+    # Schedule next cleanup
+    schedule_timeout(cleanup_expired_timestamp_cache, TIMESTAMP_WINDOW_MS // 2)
+    
+    if expired_count > 0:
+        log_timeout_event("timestamp_cache_cleanup", expired_count)
+```
+
+### Integration with RTO Calculation
+
+The anti-replay mechanism works alongside RTO timeouts without interference:
+
+- **Timestamp validation** occurs before RTO timers are set
+- **Replay detection** prevents invalid packets from affecting RTT measurements  
+- **Out-of-order handling** within the timestamp window doesn't trigger unnecessary retransmissions
+- **Cache cleanup** runs independently of RTO calculations to maintain performance
 ```

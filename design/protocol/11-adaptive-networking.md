@@ -1,20 +1,20 @@
 # Adaptive Networking and Dynamic Delay Tuning
 
-This document specifies the adaptive delay measurement and tuning mechanisms that optimize port hopping timing based on real-time network conditions, providing dynamic balance between security and reliability.
+This document specifies the adaptive delay measurement and tuning mechanisms that optimize port hopping timing based on real-time network conditions, providing balance between security and reliability.
 
 ## Overview
 
-The adaptive networking system continuously monitors network performance and dynamically adjusts protocol parameters to optimize the balance between security (minimal port exposure) and reliability (sufficient tolerance for network variations). This eliminates the need for static configurations while ensuring optimal performance across diverse network environments.
+The adaptive networking system monitors network performance and adjusts protocol parameters to optimize the balance between security (minimal port exposure) and reliability (tolerance for network variations). This eliminates static configurations while ensuring optimal performance across network environments.
 
 ## Purpose and Rationale
 
 Adaptive networking serves critical performance and security optimization functions:
 
-- **Network Adaptation**: Automatically adjusts to varying network conditions including latency, jitter, and packet loss
-- **Security Optimization**: Minimizes port exposure time while maintaining sufficient tolerance for legitimate packet delays
-- **Performance Efficiency**: Reduces unnecessary port listening overhead while preventing packet loss due to timing mismatches
-- **Dynamic Response**: Continuously measures and adapts to changing network characteristics without manual configuration
-- **Peer Coordination**: Negotiates optimal delay parameters between peers to ensure synchronized timing expectations
+- **Network Adaptation**: Adjusts to varying network conditions including latency, jitter, and packet loss
+- **Security Optimization**: Minimizes port exposure time while maintaining tolerance for legitimate packet delays
+- **Performance Efficiency**: Reduces port listening overhead while preventing packet loss due to timing mismatches
+- **Dynamic Response**: Measures and adapts to changing network characteristics without manual configuration
+- **Peer Coordination**: Negotiates optimal delay parameters between peers for synchronized timing expectations
 - **Resilience**: Maintains connectivity and performance during network condition changes and degradation
 
 
@@ -41,22 +41,22 @@ adaptive_delay_state = {
     'peer_delay_window': ADAPTIVE_DELAY_WINDOW_MIN,        // Peer's reported window
     'network_jitter': 0,                                   // Measured network jitter (ms)
     'packet_loss_rate': 0.0,                              // Measured packet loss rate (0.0-1.0)
-    'adaptation_enabled': true,                            // Adaptation system enabled
+    'is_adaptation_enabled': true,                         // Adaptation system enabled
     'measurement_sequence': 0,                             // Sequence counter for measurements
     'negotiation_sequence': 0,                             // Sequence counter for negotiations
     'network_conditions': {},                             // Current network condition summary
     'performance_history': []                             // Historical performance data
 }
 
-// Adaptive delay constants
-ADAPTIVE_DELAY_WINDOW_MIN = 1            // Minimum delay window size (time windows)
-ADAPTIVE_DELAY_WINDOW_MAX = 16           // Maximum delay window size (time windows)  
-DELAY_MEASUREMENT_SAMPLES = 10           // Number of samples for delay measurement
-DELAY_NEGOTIATION_INTERVAL_MS = 60000    // Delay parameters negotiation interval (1 minute)
-DELAY_PERCENTILE_TARGET = 95             // Target percentile for delay allowance (95th percentile)
-BASE_HEARTBEAT_PAYLOAD_SIZE = 8          // Size of base heartbeat payload (bytes)
-SAFETY_MARGIN_MS = 100                   // Safety margin for delay calculations
-BASE_TRANSMISSION_DELAY_ALLOWANCE_MS = 1000 // Base allowance for network transmission delay
+// Adaptive delay constants are defined in 02-core-definitions.md:
+// - ADAPTIVE_DELAY_WINDOW_MIN = 1
+// - ADAPTIVE_DELAY_WINDOW_MAX = 16  
+// - DELAY_MEASUREMENT_SAMPLES = 10
+// - DELAY_NEGOTIATION_INTERVAL_MS = 60000
+// - DELAY_PERCENTILE_TARGET = 95
+// - BASE_HEARTBEAT_PAYLOAD_SIZE = 8
+// - SAFETY_MARGIN_MS = 100
+// - BASE_TRANSMISSION_DELAY_ALLOWANCE_MS = 1000
 NETWORK_CONDITION_HISTORY_SIZE = 50      // Number of historical condition snapshots
 PERFORMANCE_ADAPTATION_THRESHOLD = 0.05   // 5% threshold for performance changes
 
@@ -68,7 +68,7 @@ function initialize_adaptive_networking():
     adaptive_delay_state.peer_delay_window = ADAPTIVE_DELAY_WINDOW_MIN
     adaptive_delay_state.network_jitter = 0
     adaptive_delay_state.packet_loss_rate = 0.0
-    adaptive_delay_state.adaptation_enabled = true
+    adaptive_delay_state.is_adaptation_enabled = true
     adaptive_delay_state.measurement_sequence = 0
     adaptive_delay_state.negotiation_sequence = 0
     adaptive_delay_state.network_conditions = initialize_network_conditions()
@@ -92,7 +92,7 @@ function get_current_port_with_adaptive_delay_allowance(port_params):
 
 function get_effective_delay_window():
     # Get current effective delay window size
-    if not adaptive_delay_state.adaptation_enabled:
+    if not adaptive_delay_state.is_adaptation_enabled:
         return ADAPTIVE_DELAY_WINDOW_MIN
     
     # Use negotiated value if available and recent
@@ -434,7 +434,7 @@ function create_enhanced_heartbeat_packet():
         'network_jitter': int(adaptive_delay_state.network_jitter),
         'packet_loss_rate': int(adaptive_delay_state.packet_loss_rate * 1000),  # Encode as per-mille
         'measurement_count': len(adaptive_delay_state.delay_measurements),
-        'adaptation_enabled': adaptive_delay_state.adaptation_enabled,
+        'is_adaptation_enabled': adaptive_delay_state.is_adaptation_enabled,
         'negotiation_sequence': adaptive_delay_state.negotiation_sequence
     }
     
@@ -530,7 +530,7 @@ function serialize_delay_payload(delay_payload):
     # Bits 20-29: packet_loss_rate (10 bits, 0-1023 per-mille)
     # Bits 30-37: measurement_count (8 bits, max 255)
     # Bits 38-47: negotiation_sequence (10 bits, rolling counter)
-    # Bit 48: adaptation_enabled (1 bit)
+    # Bit 48: is_adaptation_enabled (1 bit)
     # Bits 49-63: reserved (15 bits)
     
     packed_data = 0
@@ -539,7 +539,7 @@ function serialize_delay_payload(delay_payload):
     packed_data |= ((delay_payload.packet_loss_rate & 0x3FF) << 20)
     packed_data |= ((delay_payload.measurement_count & 0xFF) << 30)
     packed_data |= ((delay_payload.negotiation_sequence & 0x3FF) << 38)
-    packed_data |= ((1 if delay_payload.adaptation_enabled else 0) << 48)
+    packed_data |= ((1 if delay_payload.is_adaptation_enabled else 0) << 48)
     
     return packed_data.to_bytes(8, 'big')
 
@@ -556,7 +556,7 @@ function deserialize_delay_payload(payload_data):
         'packet_loss_rate': (packed_data >> 20) & 0x3FF,
         'measurement_count': (packed_data >> 30) & 0xFF,
         'negotiation_sequence': (packed_data >> 38) & 0x3FF,
-        'adaptation_enabled': bool((packed_data >> 48) & 0x1)
+        'is_adaptation_enabled': bool((packed_data >> 48) & 0x1)
     }
 ```
 
