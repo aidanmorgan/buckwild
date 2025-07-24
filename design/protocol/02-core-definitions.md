@@ -27,7 +27,7 @@ MONTH_TRANSITION_PREPARATION_MS = 3600000 // Start month transition prep 1 hour 
 SAFETY_MARGIN_MS = 100                   // Safety margin for delay calculations
 BASE_TRANSMISSION_DELAY_ALLOWANCE_MS = 1000 // Base allowance for network transmission delay
 ADAPTIVE_DELAY_WINDOW_MIN = 1            // Minimum delay window size (time windows - used in: 11-adaptive-networking.md)
-ADAPTIVE_DELAY_WINDOW_MAX = 16           // Maximum delay window size (time windows - used in: 11-adaptive-networking.md)
+ADAPTIVE_DELAY_WINDOW_MAX = 16           // Maximum delay window size (time windows = 8 seconds - used in: 11-adaptive-networking.md)
 DELAY_MEASUREMENT_SAMPLES = 10           // Number of samples for delay measurement (used in: 11-adaptive-networking.md)
 DELAY_NEGOTIATION_INTERVAL_MS = 60000    // Delay parameters negotiation interval (1 minute - used in: 11-adaptive-networking.md)
 DELAY_PERCENTILE_TARGET = 95             // Target percentile for delay allowance (95th percentile - used in: 11-adaptive-networking.md)

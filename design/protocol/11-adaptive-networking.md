@@ -180,11 +180,11 @@ function measure_packet_delay(packet):
     # Convert time window difference to milliseconds
     delay_ms = (actual_time_window - expected_time_window) * HOP_INTERVAL_MS
     
-    # Only record positive delays (packets arriving late)
-    if delay_ms >= 0:
-        record_delay_measurement(delay_ms, packet)
+    # Record both positive and negative delays to understand timing variations
+    # Positive = late packets, Negative = early packets (clock skew, fast routing)
+    record_delay_measurement(abs(delay_ms), packet, delay_ms < 0)
 
-function record_delay_measurement(delay_ms, packet):
+function record_delay_measurement(delay_ms, packet, is_early_packet):
     # Record delay measurement for statistical analysis
     current_time = get_current_time_ms()
     
@@ -194,7 +194,8 @@ function record_delay_measurement(delay_ms, packet):
         'sequence': adaptive_delay_state.measurement_sequence,
         'packet_type': packet.type,
         'packet_size': len(packet.serialize()),
-        'rtt_estimate': session_state.rtt_srtt  # From RTO calculation
+        'rtt_estimate': session_state.rtt_srtt,  # From RTO calculation
+        'is_early': is_early_packet  # Track early vs late arrivals
     }
     
     adaptive_delay_state.measurement_sequence += 1
@@ -218,10 +219,12 @@ function update_adaptive_delay_window():
     if len(recent_measurements) < DELAY_MEASUREMENT_SAMPLES // 2:
         return  # Insufficient data
     
-    # Calculate statistical metrics
+    # Calculate statistical metrics for both early and late packets
     delays = [m.delay_ms for m in recent_measurements]
+    early_packets = [m for m in recent_measurements if m.is_early]
+    late_packets = [m for m in recent_measurements if not m.is_early]
     
-    # Calculate 95th percentile delay
+    # Calculate 95th percentile delay (for symmetric window calculation)
     delays.sort()
     percentile_index = int(len(delays) * DELAY_PERCENTILE_TARGET / 100)
     percentile_delay = delays[min(percentile_index, len(delays) - 1)]
@@ -234,31 +237,42 @@ function update_adaptive_delay_window():
     # Update network statistics
     adaptive_delay_state.network_jitter = jitter
     
-    # Calculate required delay window
-    # Convert delay to time windows, add safety margin
+    # Calculate required delay window for symmetric operation
+    # Window covers both past and future time windows around current time
     safety_margin = max(SAFETY_MARGIN_MS, jitter)
     total_delay_allowance = percentile_delay + safety_margin
-    required_windows = math.ceil(total_delay_allowance / HOP_INTERVAL_MS)
     
-    # Apply bounds
-    new_delay_window = max(ADAPTIVE_DELAY_WINDOW_MIN, 
-                          min(required_windows, ADAPTIVE_DELAY_WINDOW_MAX))
+    # Convert to time windows and account for symmetric window
+    # Window size is total span, so half-window on each side of current time
+    required_half_windows = math.ceil(total_delay_allowance / HOP_INTERVAL_MS)
+    required_total_windows = (required_half_windows * 2) + 1  # +1 for current window
+    
+    # Apply bounds and ensure odd number for symmetric operation
+    bounded_windows = max(ADAPTIVE_DELAY_WINDOW_MIN, 
+                         min(required_total_windows, ADAPTIVE_DELAY_WINDOW_MAX))
+    if bounded_windows % 2 == 0:
+        bounded_windows += 1  # Ensure odd number for symmetry
     
     # Update current delay window with smoothing to prevent rapid changes
     if adaptive_delay_state.current_delay_window == 0:
-        adaptive_delay_state.current_delay_window = new_delay_window
+        adaptive_delay_state.current_delay_window = bounded_windows
     else:
         # Apply exponential smoothing
         smoothing_factor = 0.3
-        adaptive_delay_state.current_delay_window = int(
+        smoothed_window = int(
             (1 - smoothing_factor) * adaptive_delay_state.current_delay_window +
-            smoothing_factor * new_delay_window
+            smoothing_factor * bounded_windows
         )
+        # Ensure result is odd for symmetry
+        if smoothed_window % 2 == 0:
+            smoothed_window += 1
+        adaptive_delay_state.current_delay_window = smoothed_window
     
     # Log significant changes
-    if abs(new_delay_window - adaptive_delay_state.current_delay_window) > 1:
-        log_delay_window_change(adaptive_delay_state.current_delay_window, new_delay_window, 
-                               percentile_delay, jitter)
+    early_pct = len(early_packets) * 100 / len(recent_measurements) if recent_measurements else 0
+    if abs(bounded_windows - adaptive_delay_state.current_delay_window) > 1:
+        log_delay_window_change(adaptive_delay_state.current_delay_window, bounded_windows, 
+                               percentile_delay, jitter, early_pct)
 
 function get_recent_delay_measurements():
     # Get recent delay measurements for analysis
@@ -569,80 +583,58 @@ function optimize_network_performance():
     # Continuously optimize network performance based on measurements
     current_conditions = assess_network_conditions()
     
-    # Apply different optimization strategies based on conditions
-    if current_conditions.congested_network:
-        apply_congestion_optimization()
-    
-    if current_conditions.high_latency:
-        apply_latency_optimization()
-    
-    if current_conditions.high_jitter:
-        apply_jitter_optimization()
-    
-    if current_conditions.high_loss:
-        apply_loss_optimization()
+    # Apply unified optimization strategy to prevent accumulation
+    apply_network_condition_optimizations(current_conditions)
     
     # Update port listening strategy
     update_port_listening_strategy(session_state.port_params)
 
-function apply_congestion_optimization():
-    # Optimize for congested network conditions
+function apply_network_condition_optimizations(current_conditions):
+    # Apply network optimizations based on current conditions
+    # Calculate optimizations but don't accumulate - use maximum needed
     
-    # Increase delay window to reduce port switching overhead
-    if adaptive_delay_state.current_delay_window < ADAPTIVE_DELAY_WINDOW_MAX - 2:
-        adaptive_delay_state.current_delay_window += 1
+    base_window = adaptive_delay_state.current_delay_window
+    optimization_adjustments = []
     
-    # Reduce heartbeat frequency to lower network load
-    increase_heartbeat_interval()
+    if current_conditions.high_congestion:
+        # Increase delay window to reduce port switching overhead
+        congestion_adjustment = min(2, ADAPTIVE_DELAY_WINDOW_MAX - base_window)
+        optimization_adjustments.append(("congestion", congestion_adjustment))
+        increase_heartbeat_interval()
+        enable_conservative_timing_mode()
     
-    # Enable more conservative timing
-    enable_conservative_timing_mode()
+    if current_conditions.high_latency:
+        # Increase delay window to accommodate longer round trips  
+        latency_adjustment = min(4, ADAPTIVE_DELAY_WINDOW_MAX - base_window)
+        optimization_adjustments.append(("latency", latency_adjustment))
+        extend_port_transition_overlap()
+        increase_timeout_tolerances()
     
-    log_optimization_applied("congestion")
-
-function apply_latency_optimization():
-    # Optimize for high latency conditions
+    if current_conditions.high_jitter:
+        # Increase delay window to handle timing variations
+        jitter_windows = min(3, int(adaptive_delay_state.network_jitter / 200))  # 1 window per 200ms jitter
+        optimization_adjustments.append(("jitter", jitter_windows))
+        enable_jitter_compensation()
     
-    # Increase delay window to accommodate longer round trips
-    if adaptive_delay_state.current_delay_window < ADAPTIVE_DELAY_WINDOW_MAX - 1:
-        adaptive_delay_state.current_delay_window += 2
+    if current_conditions.high_loss:
+        # Increase delay window for retransmissions
+        loss_windows = min(4, int(adaptive_delay_state.packet_loss_rate * 25))
+        optimization_adjustments.append(("loss", loss_windows))
     
-    # Extend port transition overlap
-    extend_port_transition_overlap()
-    
-    # Increase timeout tolerances
-    increase_timeout_tolerances()
-    
-    log_optimization_applied("latency")
-
-function apply_jitter_optimization():
-    # Optimize for high jitter conditions
-    
-    # Increase delay window to handle timing variations
-    jitter_windows = min(2, int(adaptive_delay_state.network_jitter / 250))  # 1 window per 250ms jitter
-    if adaptive_delay_state.current_delay_window + jitter_windows <= ADAPTIVE_DELAY_WINDOW_MAX:
-        adaptive_delay_state.current_delay_window += jitter_windows
-    
-    # Use more conservative port timing
-    enable_jitter_compensation()
-    
-    log_optimization_applied("jitter")
-
-function apply_loss_optimization():
-    # Optimize for high packet loss conditions
-    
-    # Significantly increase delay window for retransmissions
-    loss_windows = min(3, int(adaptive_delay_state.packet_loss_rate * 20))
-    if adaptive_delay_state.current_delay_window + loss_windows <= ADAPTIVE_DELAY_WINDOW_MAX:
-        adaptive_delay_state.current_delay_window += loss_windows
-    
-    # Enable aggressive retransmission
-    enable_aggressive_retransmission()
-    
-    # Increase redundancy
-    enable_packet_redundancy()
-    
-    log_optimization_applied("loss")
+    # Apply the maximum adjustment needed (don't accumulate)
+    if optimization_adjustments:
+        max_adjustment = max(adj[1] for adj in optimization_adjustments)
+        optimized_window = min(base_window + max_adjustment, ADAPTIVE_DELAY_WINDOW_MAX)
+        
+        # Ensure odd number for symmetric operation
+        if optimized_window % 2 == 0:
+            optimized_window += 1
+            
+        adaptive_delay_state.current_delay_window = optimized_window
+        
+        # Log applied optimizations
+        active_optimizations = [adj[0] for adj in optimization_adjustments if adj[1] > 0]
+        log_optimizations_applied(active_optimizations, max_adjustment, optimized_window)
 
 function detect_rtt_trend_increase():
     # Detect if RTT is trending upward (congestion indicator)
