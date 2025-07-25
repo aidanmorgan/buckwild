@@ -69,7 +69,6 @@ Security SHALL be integrated at every layer:
 - All packets MUST include HMAC validation
 - Duplicate detection SHALL use timestamp-based mechanisms
 - Key rotation SHALL implement time-bounded rotation
-- Traffic obfuscation SHALL use synchronized port hopping
 - Sensitive data SHALL be automatically zeroed
 
 ## High-Level Architecture
@@ -112,6 +111,10 @@ Security SHALL be integrated at every layer:
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐   │   │
 │  │  │Fragmentation│  │Time Sync    │  │Session Mgmt │   │   │
 │  │  │Engine       │  │Engine       │  │& Lifecycle  │   │   │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘   │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐   │   │
+│  │  │HMAC Policy  │  │Adaptive     │  │             │   │   │
+│  │  │Engine       │  │Networking   │  │             │   │   │
 │  │  └─────────────┘  └─────────────┘  └─────────────┘   │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │  ┌─────────────────────────────────────────────────────────┐   │
@@ -262,9 +265,9 @@ Network Interface (NIC)
 
 **Batched Processing**: Packets are processed in batches to amortize syscall overhead and improve cache efficiency.
 
-**Session-Based Routing**: Session IDs enable direct packet routing without port collision concerns, simplifying the architecture.
+**Session ID-Based Routing**: Session IDs (16/32/64-bit configurable) enable direct packet routing without port collision concerns. eBPF programs route packets by session ID rather than port, eliminating collision detection complexity and enabling efficient concurrent connections between the same peers.
 
-**Thread Pool Design**: Separate RX/TX thread pools prevent head-of-line blocking and enable parallel processing.
+**Thread Pool Design**: Separate RX/TX thread pools prevent head-of-line blocking and enable parallel processing. Dedicated connection establishment threads SHALL handle multiple concurrent handshakes without blocking data transmission.
 
 ## Core Implementation Design
 
@@ -296,15 +299,28 @@ The daemon implements a high-performance, multi-threaded architecture with eight
 
 #### Key Subsystem Design Decisions
 
-**ECDH Connection Engine**: Uses 10-minute key caching with reference counting to balance security and performance. Keys are automatically cleaned up when no sessions reference them.
+**ECDH Connection Engine**: Uses 10-minute key caching with reference counting to balance security and performance. Keys are automatically cleaned up when no sessions reference them. SHALL support multiple concurrent connection establishment attempts from different sources simultaneously.
 
-**Port Hopping Engine**: Implements atomic port transition coordination with eBPF layer. Uses dual-epoch time system to separate connection establishment from data transmission.
+**PSK Discovery Engine**: Implements privacy-preserving set intersection with Bloom filters. SHALL handle multiple concurrent discovery requests in parallel, maintaining separate discovery state per source to prevent interference between simultaneous discovery operations.
+
+**HMAC Policy Engine**: Manages adaptive HMAC policies (LIGHT: 64-bit, MEDIUM: 128-bit, STRONG: 256-bit) with automatic policy selection based on packet type, security context, and performance requirements. Enforces periodic HMAC_STRONG validation every 100 data packets and during critical transitions.
+
+**Adaptive Networking Engine**: Implements dynamic network parameter adjustment including asymmetric delay window management, RTT-based optimization, and network condition monitoring. Provides adaptive port window sizing (1-16 time windows) based on measured packet arrival patterns and statistical analysis.
+
+**Port Hopping Engine**: Implements atomic port transition coordination with eBPF layer. Uses dual-epoch time system:
+- Base port hopping: Daily epochs (500ms buckets since UTC midnight) for connection establishment using PSK-derived daily keys
+- Session-specific hopping: Monthly epochs (500ms buckets since UTC month start) for established connections using ECDH-derived parameters
 
 **Cryptographic Layer**: Employs constant-time cryptographic operations and secure memory allocation. HMAC context precomputation reduces per-packet overhead.
 
 **Flow Control Engine**: Implements TCP-compatible congestion control over UDP datagrams. Uses lock-free ring buffers for packet buffering.
 
-**Recovery Engine**: Implements multi-layer recovery with atomic state transitions. Progressive fallback strategies prevent cascading failures.
+**Recovery Engine**: Implements multi-layer recovery with atomic state transitions:
+- Level 1: Time synchronization recovery with challenge-response nonce validation
+- Level 2: Session rekeying using fresh ECDH key exchange for perfect forward secrecy
+- Level 3: Sequence repair for out-of-sync sequence numbers with atomic window management
+- Level 4: Emergency recovery with connection re-establishment
+Progressive fallback strategies prevent cascading failures with maximum 5 attempts per level.
 
 **Fragmentation Engine**: Uses memory pools for efficient fragment handling. Session-specific fragment ID spaces prevent collisions in multi-session environments.
 
@@ -331,6 +347,15 @@ The eBPF layer provides critical performance acceleration by processing packets 
 **Batched Notifications**: Ring buffer design batches multiple packets before notifying userspace, reducing syscall overhead.
 
 **Pre-computed Hash Values**: Port calculations use pre-computed values stored in eBPF maps to minimize per-packet computation.
+
+**Fragment Security Filtering**: eBPF programs perform comprehensive fragment validation including:
+- Fragment rate limiting: 20 fragments/second per session using eBPF maps with sliding window counters
+- Fragment size validation: Enforce 64-byte minimum and 1400-byte maximum fragment payload sizes
+- Session binding verification: Ensure fragments belong to established sessions before processing
+- Fragment bomb detection: Track total fragments per source (global limit 1000) and per session (limit 10)
+- Memory limits: 1MB maximum reassembly memory per session, system-wide reassembly limits
+- Overlap detection: Identify and reject fragments with conflicting payload data
+- Timeout enforcement: 5-second reassembly timeout with automatic cleanup
 
 #### eBPF Map Design Strategy
 
@@ -363,12 +388,24 @@ Our port hopping implementation makes several key design decisions to optimize p
 
 #### Adaptive Window Management Design
 
-**Design Choice**: Dynamic port window sizing based on measured network conditions rather than fixed windows.
+**Design Choice**: Dynamic port window sizing based on measured network conditions with asymmetric adaptation.
 
 **Implementation**:
-- RTT measurement drives window size calculations
+- **Asymmetric Window Adaptation**: Separate window sizes for past ports (late packets) and future ports (early packets)
+- **Packet Pattern Analysis**: Analyzes early vs late packet ratios to bias window allocation
+- **Statistical Optimization**: Uses 95th percentile delays calculated separately for each direction
+- **Bias Factor Application**: Amplifies window size in the direction with higher packet arrival rates
+- RTT measurement drives base window size calculations
 - Window size constrained between 50ms-500ms to balance performance and connectivity
-- Separate windows for base ports (connection setup) and session ports (data transmission)
+
+#### Asymmetric Window Benefits
+
+**Efficiency Gains**: Instead of symmetric 8-window allocation (4 past + 4 future), system can adapt to:
+- **Clock Skew Scenarios**: 2 past + 6 future windows when peer clocks run fast
+- **Network Delay Scenarios**: 6 past + 2 future windows when network introduces latency
+- **Balanced Scenarios**: 4 past + 4 future windows when timing is well-synchronized
+
+**Performance Impact**: Reduces unnecessary port listening by 25-50% in asymmetric network conditions while maintaining full connectivity.
 
 #### eBPF Map Architecture
 
@@ -379,6 +416,12 @@ Our port hopping implementation makes several key design decisions to optimize p
 **Session Port Maps (HASH)**: Hash maps for session-specific port state, enabling O(1) lookup by session ID.
 
 **Listening Port Arrays**: Fixed-size arrays (max 32 ports) storing current listening ports for each session, enabling fast port validation in XDP.
+
+**Fragment Security Maps**: Specialized maps for fragment bomb prevention:
+- **Fragment Rate Maps (LRU_HASH)**: Per-source IP fragment rate tracking with sliding window counters
+- **Fragment Count Maps (HASH)**: Per-session active fragment reassembly tracking
+- **Blocked Source Maps (LRU_HASH)**: Temporary IP blacklist for sources sending malicious fragments
+- **Fragment Size Maps (ARRAY)**: Precomputed size limits for different packet types
 
 ## Security Implementation Design
 
@@ -488,6 +531,16 @@ Per `12-recovery-mechanisms.md` and `02-core-definitions.md`:
 - Recovery strategies SHALL execute based on atomic state loading with appropriate ordering
 - State transitions SHALL be atomic to support concurrent recovery operations
 
+#### Fragment Bomb Prevention Requirements
+Per `07-data-transmission.md` security enhancements:
+- Fragment validation SHALL enforce session binding to prevent cross-session attacks
+- Memory limits SHALL cap per-session reassembly at 1MB and global reassembly at system-defined limits
+- Fragment rate limiting SHALL restrict arrival rates to 20 fragments/second per session
+- Overlap detection SHALL identify and reject fragments with conflicting payloads
+- Duplicate detection SHALL use constant-time comparison to prevent timing attacks
+- Resource accounting SHALL track memory usage per session and globally
+- Automatic cleanup SHALL remove expired reassembly buffers after 5-second timeout
+
 ### eBPF Coordination Requirements
 
 The eBPF coordination system SHALL ensure atomic updates across shared data structures:
@@ -530,10 +583,28 @@ The implementation SHALL follow these architectural principles:
 - State machines SHALL use atomic compare-and-swap operations for TCP state transitions
 - Packet processing SHALL use dedicated threads for ingress/egress processing
 
+#### Concurrent Connection Handling Requirements
+- Connection establishment SHALL support multiple simultaneous connection attempts from different peers
+- Discovery engine SHALL handle concurrent PSK discovery requests without state interference
+- ECDH key exchange SHALL maintain separate cryptographic state per connection attempt
+- Session management SHALL use lock-free data structures to track multiple pending connections
+- Connection limits SHALL be enforced per source IP to prevent resource exhaustion attacks
+- Parallel connection processing SHALL not block established session data transmission
+
 #### Processing Requirements
 - Cryptographic operations SHALL use separate thread pools for HMAC/ECDH operations
 - Timer management SHALL use lock-free timer wheels for retransmission and flow control
 - Session lifecycle SHALL use automatic cleanup with epoch-based memory reclamation
+
+#### Fragment Security Implementation Requirements
+- Fragment validation SHALL implement session binding checks before processing
+- Memory tracking SHALL use atomic counters for per-session and global memory usage
+- Rate limiting SHALL use token bucket algorithms per session with atomic operations
+- Overlap detection SHALL compare fragment payloads using constant-time operations
+- Duplicate handling SHALL maintain fragment fingerprints in lock-free hash maps
+- Resource cleanup SHALL use background threads with epoch-based garbage collection
+- Security logging SHALL use structured logging with zero-allocation buffers
+- Source blocking SHALL use lock-free IP blacklist with time-based expiration
 
 #### Performance Optimization Requirements
 - CPU affinity SHALL pin processing threads to specific CPU cores
@@ -562,9 +633,19 @@ The configuration SHALL support the following parameters:
 
 #### Security Configuration
 - Maximum connections per source SHALL be configurable (default 100)
+- Maximum concurrent connection attempts per source SHALL be configurable (default 10)
 - Rate limiting SHALL be configurable in packets per second (default 1000)
+- Discovery request rate limiting SHALL be configurable per source (default 5 per minute)
 - Entropy requirements SHALL be configurable in bits (default 256)
 - Replay window SHALL be configurable in milliseconds (default 30000ms)
+
+#### Fragment Security Configuration
+- Fragment rate limits SHALL be configurable per session (default 20 fragments/second)
+- Fragment reassembly memory limits SHALL be configurable per session (default 1MB)
+- Fragment timeout SHALL be configurable (default 5000ms)
+- Maximum concurrent reassemblies SHALL be configurable per session (default 10)
+- Global reassembly limits SHALL be configurable (default 1000 concurrent)
+- Source blocking duration SHALL be configurable (default 300000ms)
 
 #### Cryptographic Configuration
 - Key rotation interval SHALL be configurable in hours (default 24)
@@ -601,11 +682,17 @@ The implementation SHALL include the following performance optimizations without
 - Header parsing SHALL be optimized for common packet configurations
 - HMAC context precomputation SHALL be enabled for all operations
 - Port calculation caching SHALL be implemented for repeated calculations
+- Connection establishment SHALL use dedicated thread pools to enable concurrent processing
+- Discovery operations SHALL be parallelized across multiple worker threads
+- Session state management SHALL support concurrent read/write access patterns
 
 #### eBPF Integration Requirements
 - eBPF protocol filtering SHALL be enabled for all packet processing
 - Ring buffer communication SHALL use zero-copy memory mapping
 - Atomic coordination SHALL minimize syscall overhead through batching
+- Fragment security filtering SHALL be performed in XDP before userspace transitions
+- Fragment rate limiting SHALL use eBPF maps with atomic counter operations
+- Session binding validation SHALL occur in eBPF using session lookup maps
 
 This architecture provides the foundation for secure, synchronized network communication while maintaining high performance through eBPF integration and adaptive window management. The system SHALL achieve 5-8x performance improvements through mandatory optimizations while maintaining strict protocol compliance and full security guarantees.
 

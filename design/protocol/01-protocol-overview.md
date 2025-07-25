@@ -248,7 +248,7 @@ The protocol uses a multi-layered key derivation system with two primary paths: 
 - **Lifetime**: Session duration (connection establishment through termination)
 - **Use Cases**: 
   - HMAC authentication of all packet types
-  - Adaptive HMAC policies (32-bit, 64-bit, 128-bit)
+  - Adaptive HMAC policies (64-bit, 128-bit, 256-bit)
   - Primary session protection mechanism
 - **Security Properties**: Perfect forward secrecy through ECDH derivation, session isolation
 - **Storage**: In-memory only, cleared on session termination with `secure_zero_memory()`

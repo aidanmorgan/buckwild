@@ -33,13 +33,14 @@ The recovery framework uses cryptographic proofs and validation to prevent recov
 ### Recovery Escalation Levels
 
 ```pseudocode
-// Recovery escalation levels (in order of escalation)
-RECOVERY_LEVEL_NONE = 0                     // No recovery needed
-RECOVERY_LEVEL_TIME_SYNC = 1                // Time synchronization recovery
-RECOVERY_LEVEL_SEQUENCE_REPAIR = 2          // Sequence number repair
-RECOVERY_LEVEL_SESSION_REKEY = 3            // Session key rotation/recovery
-RECOVERY_LEVEL_CONNECTION_TERMINATE = 4     // Force connection termination
-RECOVERY_LEVEL_FAILED = 5                   // Recovery completely failed
+// Recovery escalation levels (aligned with connection sub-states from 06-connection-lifecycle.md)
+RECOVERY_LEVEL_NONE = 0                     // No recovery needed (matches RECOVERY_SUB_STATE_NORMAL)
+RECOVERY_LEVEL_TIME_SYNC = 1                // Time synchronization recovery (matches RECOVERY_SUB_STATE_RESYNC)
+RECOVERY_LEVEL_SESSION_REKEY = 2            // Session key rotation/recovery (matches RECOVERY_SUB_STATE_REKEY)
+RECOVERY_LEVEL_SEQUENCE_REPAIR = 3          // Sequence number repair (matches RECOVERY_SUB_STATE_REPAIR)
+RECOVERY_LEVEL_EMERGENCY = 4                // Emergency recovery (matches RECOVERY_SUB_STATE_EMERGENCY)
+RECOVERY_LEVEL_CONNECTION_TERMINATE = 5     // Force connection termination
+RECOVERY_LEVEL_FAILED = 6                   // Recovery completely failed
 
 // Recovery state tracking
 recovery_state = {
@@ -73,15 +74,19 @@ function determine_recovery_level_needed():
     if detect_time_drift():
         return RECOVERY_LEVEL_TIME_SYNC
     
-    # Level 2: Sequence number issues  
-    if detect_sequence_mismatch():
-        return RECOVERY_LEVEL_SEQUENCE_REPAIR
-    
-    # Level 3: Authentication failures
+    # Level 2: Authentication failures (rekey before sequence repair for security)
     if detect_authentication_failures():
         return RECOVERY_LEVEL_SESSION_REKEY
     
-    # Level 4: Multiple simultaneous issues
+    # Level 3: Sequence number issues  
+    if detect_sequence_mismatch():
+        return RECOVERY_LEVEL_SEQUENCE_REPAIR
+    
+    # Level 4: Emergency conditions
+    if detect_emergency_conditions():
+        return RECOVERY_LEVEL_EMERGENCY
+    
+    # Level 5: Multiple simultaneous issues
     if detect_multiple_failure_conditions():
         return RECOVERY_LEVEL_CONNECTION_TERMINATE
     
@@ -385,7 +390,7 @@ function execute_ecdh_rekey_recovery():
     
     # Update other derived parameters
     session_state.port_hop_seed = new_session_keys.port_hop_seed
-    session_state.time_sync_offset = new_session_keys.time_sync_offset
+    session_state.time_offset = new_session_keys.time_offset
     
     # Step 8: Reset authentication error counters
     session_state.auth_failure_count = 0
@@ -480,6 +485,8 @@ function attempt_recovery_at_level(recovery_level):
             return execute_sequence_repair_recovery()
         case RECOVERY_LEVEL_SESSION_REKEY:
             return execute_ecdh_rekey_recovery()
+        case RECOVERY_LEVEL_EMERGENCY:
+            return initiate_connection_termination("Emergency recovery - connection terminated")
         case RECOVERY_LEVEL_CONNECTION_TERMINATE:
             return initiate_connection_termination("Recovery exhausted")
         default:
@@ -493,6 +500,8 @@ function escalate_recovery_level(current_level):
         case RECOVERY_LEVEL_SEQUENCE_REPAIR:
             return RECOVERY_LEVEL_SESSION_REKEY
         case RECOVERY_LEVEL_SESSION_REKEY:
+            return RECOVERY_LEVEL_EMERGENCY
+        case RECOVERY_LEVEL_EMERGENCY:
             return RECOVERY_LEVEL_CONNECTION_TERMINATE
         case RECOVERY_LEVEL_CONNECTION_TERMINATE:
             return RECOVERY_LEVEL_FAILED
@@ -819,11 +828,28 @@ The recovery system uses the following decision matrix to determine appropriate 
 - HMAC validation passes
 - Authentication failures reset
 
-### Connection Termination (Level 4)
+### Emergency Recovery (Level 4)
 **Triggers:**
 - Multiple simultaneous failures
-- All lower-level recoveries failed
-- Unrecoverable state corruption
+- Critical system state corruption
+- Security anomalies detected
+- Lower-level recoveries exhausted
+
+**Actions:**
+- Immediate connection termination
+- Send RST with emergency reason
+- Clean up session state
+- Log emergency condition
+
+**Success Criteria:**
+- Connection cleanly terminated
+- All resources freed
+
+### Connection Termination (Level 5)
+**Triggers:**
+- Emergency recovery completed
+- All recovery attempts exhausted
+- Manual termination requested
 
 **Actions:**
 - Send RST with reason

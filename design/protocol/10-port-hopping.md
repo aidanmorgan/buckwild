@@ -234,25 +234,59 @@ function get_port_for_time_window(port_params, time_window):
 
 ```pseudocode
 function calculate_ports_for_delay_window(port_params, delay_window):
-    # Calculate all valid ports for current delay window using simplified algorithm
+    # Calculate all valid ports for current delay window with asymmetric support
     # With full port range and session ID routing, duplicates are much less likely
     
     current_time_window = get_synchronized_time_window()
     ports = []
     
-    # Calculate symmetric window around current time
-    half_window = delay_window // 2
-    start_offset = -half_window
-    end_offset = half_window + (delay_window % 2)  # Handle odd window sizes
+    # Check if asymmetric windowing is enabled
+    asymmetric_state = get_adaptive_asymmetric_state()  # From adaptive delay module
+    
+    if asymmetric_state and asymmetric_state.asymmetric_adaptation_enabled:
+        # Use asymmetric window sizes
+        past_windows = asymmetric_state.past_window_size
+        future_windows = asymmetric_state.future_window_size
+        
+        # Calculate asymmetric window: past + current + future
+        start_offset = -past_windows
+        end_offset = future_windows
+        
+        for offset in range(start_offset, end_offset + 1):
+            time_window = current_time_window + offset
+            port = calculate_port_for_time_window(port_params, time_window)
+            ports.append(port)
+    else:
+        # Fallback to symmetric window calculation
+        half_window = delay_window // 2
+        start_offset = -half_window
+        end_offset = half_window + (delay_window % 2)  # Handle odd window sizes
+        
+        for offset in range(start_offset, end_offset + 1):
+            time_window = current_time_window + offset
+            port = calculate_port_for_time_window(port_params, time_window)
+            ports.append(port)
+    
+    # With 64K port range, duplicates are extremely rare, but handle them anyway
+    unique_ports = list(dict.fromkeys(ports))  # Preserves order, removes duplicates
+    
+    return unique_ports
+
+function calculate_ports_for_asymmetric_window(port_params, past_windows, future_windows):
+    # Calculate ports for explicitly asymmetric window specification
+    current_time_window = get_synchronized_time_window()
+    ports = []
+    
+    # Calculate asymmetric range: past + current + future
+    start_offset = -past_windows
+    end_offset = future_windows
     
     for offset in range(start_offset, end_offset + 1):
         time_window = current_time_window + offset
         port = calculate_port_for_time_window(port_params, time_window)
         ports.append(port)
     
-    # With 64K port range, duplicates are extremely rare, but handle them anyway
-    unique_ports = list(dict.fromkeys(ports))  # Preserves order, removes duplicates
-    
+    unique_ports = list(dict.fromkeys(ports))  # Remove duplicates, preserve order
     return unique_ports
 
 function get_current_port_with_adaptive_delay_allowance(port_params):

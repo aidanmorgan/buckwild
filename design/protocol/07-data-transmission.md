@@ -358,7 +358,7 @@ function handle_window_timeout():
     # Handle case where no window updates received
     current_time = get_current_time_ms()
     
-    if current_time - flow_control_state.last_window_update > WINDOW_TIMEOUT_MS:
+    if current_time - flow_control_state.last_window_update > WINDOW_UPDATE_TIMEOUT_MS:
         # Window timeout - probe peer and reduce congestion window
         send_window_probe()
         
@@ -553,32 +553,50 @@ function calculate_fragment_pacing_interval(fragment_count):
 
 ```pseudocode
 function handle_fragmented_data_packet(data_packet):
+    # SECURITY: Session binding - only process fragments for valid sessions
+    if not validate_session_binding(data_packet):
+        log_security_event("Fragment without valid session binding", data_packet.session_id)
+        return ERROR_SESSION_NOT_FOUND
+    
     # Check if packet has fragmentation flag
     if not data_packet.fragment_flag:
         # Regular data packet - process normally
         return process_received_data(data_packet)
     
+    # SECURITY: Enforce fragment arrival rate limits per session
+    if not check_fragment_rate_limit(data_packet.session_id):
+        log_security_event("Fragment rate limit exceeded", data_packet.session_id)
+        return ERROR_RATE_LIMITED
+
     # Extract fragmentation information
     fragment_id = data_packet.fragment_id
     fragment_index = data_packet.fragment_index
     total_fragments = data_packet.total_fragments
     
-    # Validate fragment
-    if not validate_fragment_packet(data_packet):
+    # SECURITY: Comprehensive fragment validation with security checks
+    if not validate_fragment_packet_security(data_packet):
         return ERROR_FRAGMENT_INVALID
     
-    # Get or create reassembly buffer
-    reassembly_buffer = get_or_create_reassembly_buffer(fragment_id, total_fragments)
+    # SECURITY: Check global and per-session reassembly limits
+    if not check_reassembly_resource_limits(data_packet.session_id):
+        log_security_event("Reassembly resource limits exceeded", data_packet.session_id)
+        return ERROR_MEMORY_EXHAUSTED
+
+    # Get or create reassembly buffer with session binding
+    reassembly_buffer = get_or_create_reassembly_buffer(fragment_id, total_fragments, data_packet.session_id)
     
-    # Check for duplicate fragment
+    # SECURITY: Check for duplicate fragment with overlap detection
     if reassembly_buffer.fragments[fragment_index] != null:
-        # Duplicate fragment - ignore
-        return SUCCESS
+        return handle_duplicate_fragment(reassembly_buffer, fragment_index, data_packet)
     
-    # Store fragment
-    reassembly_buffer.fragments[fragment_index] = data_packet
-    reassembly_buffer.received_count += 1
-    reassembly_buffer.timeout = get_current_time_ms() + FRAGMENT_TIMEOUT_MS
+    # SECURITY: Validate fragment does not create overlaps
+    if detect_fragment_overlap(reassembly_buffer, fragment_index, data_packet):
+        log_security_event("Fragment overlap attack detected", data_packet.session_id, fragment_id)
+        cleanup_reassembly_buffer(fragment_id)
+        return ERROR_FRAGMENT_OVERLAP
+
+    # Store fragment with memory accounting
+    store_fragment_with_accounting(reassembly_buffer, fragment_index, data_packet)
     
     # Check if reassembly is complete
     if reassembly_buffer.received_count == total_fragments:
@@ -1017,4 +1035,242 @@ function request_selective_fragment_retransmission(reassembly_buffer):
         reassembly_buffer.fragment_id,
         missing_fragments
     )
+
+## Fragment Security Functions
+
+### Session Binding and Rate Limiting
+
+```pseudocode
+function validate_session_binding(data_packet):
+    # SECURITY: Ensure fragment belongs to valid, authenticated session
+    session_id = data_packet.session_id
+    
+    # Check if session exists and is in valid state
+    session = get_session(session_id)
+    if session == null:
+        return false
+    
+    # Verify session is in data transmission state (not handshaking)
+    if session.state != SESSION_ESTABLISHED:
+        return false
+    
+    # Verify packet authentication (HMAC already validated at this point)
+    # Additional check: ensure fragment is within session's allowed sequence space
+    if not is_sequence_valid_for_session(session, data_packet.sequence_number):
+        return false
+    
+    return true
+
+function check_fragment_rate_limit(session_id):
+    # SECURITY: Enforce per-session fragment arrival rate limits
+    current_time = get_current_time_ms()
+    session = get_session(session_id)
+    
+    # Update fragment rate tracking
+    if session.fragment_rate_window_start == 0:
+        session.fragment_rate_window_start = current_time
+        session.fragment_count_in_window = 0
+    
+    # Check if we need to reset the rate window (1-second window)
+    if current_time - session.fragment_rate_window_start >= 1000:
+        session.fragment_rate_window_start = current_time
+        session.fragment_count_in_window = 0
+    
+    # Check rate limit
+    if session.fragment_count_in_window >= FRAGMENT_ARRIVAL_RATE_LIMIT:
+        return false
+    
+    # Increment counter
+    session.fragment_count_in_window += 1
+    return true
+
+function check_reassembly_resource_limits(session_id):
+    # SECURITY: Enforce memory and CPU limits for reassembly operations
+    session = get_session(session_id)
+    
+    # Check per-session limits
+    if session.active_reassemblies >= MAX_CONCURRENT_REASSEMBLIES_PER_SESSION:
+        return false
+    
+    # Check per-session memory usage
+    if session.reassembly_memory_usage >= MAX_REASSEMBLY_MEMORY_PER_SESSION:
+        return false
+    
+    # Check global limits
+    if reassembly_state.buffer_count >= MAX_CONCURRENT_REASSEMBLIES_GLOBAL:
+        return false
+    
+    # Check global memory usage
+    if get_total_reassembly_memory() >= get_max_system_reassembly_memory():
+        return false
+    
+    return true
+
+### Duplicate Detection and Overlap Validation
+
+function handle_duplicate_fragment(reassembly_buffer, fragment_index, new_fragment):
+    # SECURITY: Handle duplicate fragments with overlap detection
+    existing_fragment = reassembly_buffer.fragments[fragment_index]
+    
+    # Check if payloads are identical (legitimate duplicate)
+    if compare_fragment_payloads(existing_fragment, new_fragment):
+        # Legitimate duplicate - update timestamp but don't change data
+        log_debug("Legitimate duplicate fragment received", 
+                 new_fragment.session_id, reassembly_buffer.fragment_id, fragment_index)
+        return SUCCESS
+    
+    # Payloads differ - this is a fragment overlap attack
+    log_security_event("Fragment overlap attack: different payloads for same index",
+                      new_fragment.session_id, reassembly_buffer.fragment_id, fragment_index)
+    
+    # Cleanup compromised reassembly
+    cleanup_reassembly_buffer(reassembly_buffer.fragment_id)
+    
+    # Block further fragments from this source for a short period
+    add_fragment_source_to_temporary_blocklist(new_fragment.source_ip, 300000)  # 5 minutes
+    
+    return ERROR_FRAGMENT_OVERLAP
+
+function detect_fragment_overlap(reassembly_buffer, fragment_index, new_fragment):
+    # SECURITY: Detect overlapping fragment boundaries
+    
+    # For this protocol, fragments should not overlap
+    # Each fragment_index should have exactly one corresponding fragment
+    # This function serves as additional validation
+    
+    # Check if fragment size exceeds expected boundaries
+    expected_offset = fragment_index * MAX_FRAGMENT_SIZE
+    fragment_payload_size = len(new_fragment.payload)
+    
+    # Validate fragment doesn't exceed packet boundaries
+    if fragment_index == reassembly_buffer.total_fragments - 1:
+        # Last fragment - check it doesn't exceed total expected size
+        max_allowed_size = MAX_TOTAL_REASSEMBLED_SIZE - expected_offset
+        if fragment_payload_size > max_allowed_size:
+            return true  # Overlap detected
+    else:
+        # Non-final fragment - should not exceed MAX_FRAGMENT_SIZE
+        if fragment_payload_size > MAX_FRAGMENT_SIZE:
+            return true  # Overlap detected
+    
+    # Check minimum fragment size (prevents tiny fragment attacks)
+    if fragment_payload_size < MIN_FRAGMENT_SIZE and fragment_index < reassembly_buffer.total_fragments - 1:
+        return true  # Invalid tiny fragment
+    
+    return false
+
+function compare_fragment_payloads(fragment1, fragment2):
+    # Compare fragment payloads for exact match
+    if len(fragment1.payload) != len(fragment2.payload):
+        return false
+    
+    # Constant-time comparison to prevent timing attacks
+    result = 0
+    for i in range(len(fragment1.payload)):
+        result |= fragment1.payload[i] ^ fragment2.payload[i]
+    
+    return result == 0
+
+### Enhanced Fragment Validation
+
+function validate_fragment_packet_security(data_packet):
+    # SECURITY: Comprehensive fragment validation with security focus
+    
+    # Call original validation
+    if not validate_fragment_packet(data_packet):
+        return false
+    
+    # Additional security checks
+    fragment_header = data_packet.fragment_header
+    
+    # SECURITY: Enforce maximum fragments limit (prevents fragment bombs)
+    if fragment_header.total_fragments > MAX_FRAGMENTS_PER_PACKET:
+        log_security_event("Fragment bomb attempt: too many fragments",
+                          data_packet.session_id, fragment_header.total_fragments)
+        return false
+    
+    # SECURITY: Enforce minimum fragment size (prevents tiny fragment attacks)
+    payload_size = len(data_packet.payload)
+    if payload_size < MIN_FRAGMENT_SIZE and fragment_header.fragment_index < fragment_header.total_fragments - 1:
+        log_security_event("Tiny fragment attack detected",
+                          data_packet.session_id, payload_size)
+        return false
+    
+    # SECURITY: Check total reassembled size doesn't exceed limits
+    estimated_total_size = fragment_header.total_fragments * MAX_FRAGMENT_SIZE
+    if estimated_total_size > MAX_TOTAL_REASSEMBLED_SIZE:
+        log_security_event("Fragment bomb attempt: total size too large",
+                          data_packet.session_id, estimated_total_size)
+        return false
+    
+    # SECURITY: Validate fragment timing (prevent slow-drip attacks)
+    current_time = get_current_time_ms()
+    if data_packet.timestamp < current_time - FRAGMENT_TIMEOUT_MS:
+        log_security_event("Stale fragment received",
+                          data_packet.session_id, fragment_header.fragment_id)
+        return false
+    
+    return true
+
+### Memory Accounting and Resource Management
+
+function store_fragment_with_accounting(reassembly_buffer, fragment_index, data_packet):
+    # Store fragment with proper memory accounting
+    session = get_session(data_packet.session_id)
+    fragment_size = len(data_packet.payload) + FRAGMENT_METADATA_SIZE
+    
+    # Update memory accounting
+    session.reassembly_memory_usage += fragment_size
+    reassembly_buffer.memory_usage += fragment_size
+    
+    # Store the fragment
+    reassembly_buffer.fragments[fragment_index] = data_packet
+    reassembly_buffer.received_count += 1
+    reassembly_buffer.timeout = get_current_time_ms() + FRAGMENT_TIMEOUT_MS
+    
+    # Update last activity
+    reassembly_buffer.last_fragment_time = get_current_time_ms()
+
+function cleanup_reassembly_buffer(fragment_id):
+    # Clean up reassembly buffer with proper resource deallocation
+    if fragment_id not in reassembly_state.active_buffers:
+        return
+    
+    buffer = reassembly_state.active_buffers[fragment_id]
+    session = get_session(buffer.session_id)
+    
+    # Update memory accounting
+    session.reassembly_memory_usage -= buffer.memory_usage
+    session.active_reassemblies -= 1
+    
+    # Clear fragment data
+    for i in range(buffer.total_fragments):
+        if buffer.fragments[i] != null:
+            secure_zero_memory(buffer.fragments[i].payload)
+            buffer.fragments[i] = null
+    
+    # Remove from active buffers
+    del reassembly_state.active_buffers[fragment_id]
+    reassembly_state.buffer_count -= 1
+
+function add_fragment_source_to_temporary_blocklist(source_ip, duration_ms):
+    # Temporarily block sources sending malicious fragments
+    current_time = get_current_time_ms()
+    expiry_time = current_time + duration_ms
+    
+    fragment_security_state.blocked_sources[source_ip] = expiry_time
+    
+    # Schedule cleanup
+    schedule_timer_callback(duration_ms, remove_blocked_source, source_ip)
+
+# Security state tracking
+fragment_security_state = {
+    'blocked_sources': {},  # IP -> expiry_time mapping
+    'attack_counters': {},  # IP -> attack count mapping
+    'global_fragment_rate': 0,  # Global fragment processing rate
+    'last_rate_reset': 0   # Last time global rate was reset
+}
+
+# Constants for fragment security
+FRAGMENT_METADATA_SIZE = 64  # Estimated overhead per fragment in memory
 ```

@@ -33,21 +33,54 @@ The design uses ephemeral ECDH (P-256), PBKDF2-HMAC-SHA256, and Bloom filter-bas
 
 ### Complete HMAC Calculation Algorithm
 ```pseudocode
-function calculate_packet_hmac(packet_data, session_key):
+function calculate_packet_hmac(packet_data, session_key, hmac_policy):
     # HMAC is calculated over all packet fields except the HMAC field itself
-    # The HMAC field is always the last 16 bytes of the packet (HMAC-SHA256-128)
+    # HMAC field size varies based on negotiated policy
+    
+    # Determine HMAC size based on policy
+    hmac_size = get_hmac_output_size(hmac_policy)
     
     # Extract packet without HMAC
-    packet_without_hmac = packet_data[0:len(packet_data)-16]
+    packet_without_hmac = packet_data[0:len(packet_data)-hmac_size]
     
-    # Calculate HMAC-SHA256-128 using session key
-    hmac_result = HMAC_SHA256_128(session_key, packet_without_hmac)
+    # Calculate HMAC using appropriate policy
+    if hmac_policy == HMAC_LIGHT:
+        hmac_result = HMAC_SHA256_64(session_key, packet_without_hmac)
+    elif hmac_policy == HMAC_MEDIUM:
+        hmac_result = HMAC_SHA256_128(session_key, packet_without_hmac)
+    elif hmac_policy == HMAC_STRONG:
+        hmac_result = HMAC_SHA256_256(session_key, packet_without_hmac)
+    else:
+        raise ValueError("Invalid HMAC policy")
     
     return hmac_result
 
+function get_hmac_output_size(hmac_policy):
+    # Return HMAC output size based on policy
+    if hmac_policy == HMAC_LIGHT:
+        return HMAC_LIGHT_OUTPUT_SIZE    # 8 bytes
+    elif hmac_policy == HMAC_MEDIUM:
+        return HMAC_MEDIUM_OUTPUT_SIZE   # 16 bytes
+    elif hmac_policy == HMAC_STRONG:
+        return HMAC_STRONG_OUTPUT_SIZE   # 32 bytes
+    else:
+        raise ValueError("Invalid HMAC policy")
+
+function HMAC_SHA256_64(key, data):
+    # HMAC-SHA256 implementation that returns first 64 bits (8 bytes) for HMAC_LIGHT
+    return HMAC_SHA256_full(key, data)[:8]
+
 function HMAC_SHA256_128(key, data):
-    # HMAC-SHA256 implementation that returns first 128 bits (16 bytes)
-    # This is the standard HMAC function used throughout the protocol
+    # HMAC-SHA256 implementation that returns first 128 bits (16 bytes) for HMAC_MEDIUM
+    return HMAC_SHA256_full(key, data)[:16]
+
+function HMAC_SHA256_256(key, data):
+    # HMAC-SHA256 implementation that returns first 256 bits (32 bytes) for HMAC_STRONG
+    return HMAC_SHA256_full(key, data)[:32]
+
+function HMAC_SHA256_full(key, data):
+    # Full HMAC-SHA256 implementation (32 bytes output)
+    # This is the base function used for all HMAC variants and HKDF operations
     
     # Standard HMAC-SHA256 implementation
     ipad = bytes([0x36] * 64)  # Inner padding
@@ -67,12 +100,12 @@ function HMAC_SHA256_128(key, data):
     inner_hash = SHA256(ipad_key + data)
     outer_hash = SHA256(opad_key + inner_hash)
     
-    # Return first 128 bits (16 bytes) for consistency
-    return outer_hash[:16]
+    # Return full 256 bits (32 bytes)
+    return outer_hash
 
-function verify_packet_hmac(packet_data, session_key, received_hmac):
-    # Calculate expected HMAC
-    expected_hmac = calculate_packet_hmac(packet_data, session_key)
+function verify_packet_hmac(packet_data, session_key, received_hmac, hmac_policy):
+    # Calculate expected HMAC using appropriate policy
+    expected_hmac = calculate_packet_hmac(packet_data, session_key, hmac_policy)
     
     # Compare HMACs (constant-time comparison)
     return constant_time_compare(expected_hmac, received_hmac)
@@ -108,7 +141,7 @@ function derive_session_key(daily_key, session_id, nonce):
     # PRK = HMAC-SHA256(salt, IKM)
     salt = session_id_bytes
     ikm = daily_key_bytes
-    prk = HMAC_SHA256_128(salt, ikm)
+    prk = HMAC_SHA256_full(salt, ikm)
     
     # HKDF-SHA256 Expand phase
     # OKM = HKDF-Expand(PRK, info, L)
@@ -134,7 +167,7 @@ function hkdf_expand_sha256(prk, info, l):
     
     while len(okm) < l:
         # T(i) = HMAC-SHA256(PRK, T(i-1) || info || counter)
-        t = HMAC_SHA256_128(prk, t + info + bytes([counter]))
+        t = HMAC_SHA256_full(prk, t + info + bytes([counter]))
         okm += t
         counter += 1
     
@@ -258,7 +291,7 @@ function derive_session_keys_from_dh(shared_secret, client_public_key, server_pu
         'server_port_offset': chunks[5],                 # 16-bit port offset
         'session_key': master_key_material[12:44],       # 32 bytes for HMAC keys from chunks 6-21
         'port_hop_seed': chunks[22] << 16 | chunks[23],  # 32-bit seed for port hopping from chunks 22-23
-        'time_sync_offset': chunks[24],                  # 16-bit time sync adjustment
+        'time_offset': chunks[24],                       # 16-bit time sync adjustment
         'congestion_seed': chunks[25]                    # 16-bit congestion control seed
     }
     

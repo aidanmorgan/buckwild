@@ -32,9 +32,11 @@ Adaptive networking serves critical performance and security optimization functi
 ### Core Adaptive Delay State
 
 ```pseudocode
-// Adaptive delay state management
+// Adaptive delay state management with asymmetric window support
 adaptive_delay_state = {
-    'current_delay_window': ADAPTIVE_DELAY_WINDOW_MIN,     // Current locally calculated window
+    'current_delay_window': ADAPTIVE_DELAY_WINDOW_MIN,     // Current locally calculated window (legacy/total)
+    'past_window_size': ADAPTIVE_DELAY_WINDOW_MIN // 2,    // Windows for past packets (late arrivals)
+    'future_window_size': ADAPTIVE_DELAY_WINDOW_MIN // 2,  // Windows for future packets (early arrivals)
     'negotiated_delay_window': ADAPTIVE_DELAY_WINDOW_MIN,  // Negotiated with peer
     'delay_measurements': [],                              // Historical delay measurements
     'last_negotiation_time': 0,                            // Last negotiation timestamp
@@ -45,7 +47,10 @@ adaptive_delay_state = {
     'measurement_sequence': 0,                             // Sequence counter for measurements
     'negotiation_sequence': 0,                             // Sequence counter for negotiations
     'network_conditions': {},                             // Current network condition summary
-    'performance_history': []                             // Historical performance data
+    'performance_history': [],                            // Historical performance data
+    'early_packet_ratio': 0.0,                           // Ratio of early vs late packets
+    'late_packet_ratio': 0.0,                            // Ratio of late vs early packets
+    'asymmetric_adaptation_enabled': true                 // Enable asymmetric window adaptation
 }
 
 // Adaptive delay constants are defined in 02-core-definitions.md:
@@ -211,68 +216,267 @@ function record_delay_measurement(delay_ms, packet, is_early_packet):
     # Update delay window if we have enough samples
     if len(adaptive_delay_state.delay_measurements) >= DELAY_MEASUREMENT_SAMPLES:
         update_adaptive_delay_window()
+        
+        # Evaluate any ongoing window optimization test
+        evaluate_window_optimization_test()
+        
+        # Periodically attempt to optimize (shrink) windows
+        periodic_window_optimization()
 
 function update_adaptive_delay_window():
-    # Update adaptive delay window based on statistical analysis
+    # Update adaptive delay window based on statistical analysis with asymmetric support
     recent_measurements = get_recent_delay_measurements()
     
     if len(recent_measurements) < DELAY_MEASUREMENT_SAMPLES // 2:
         return  # Insufficient data
     
-    # Calculate statistical metrics for both early and late packets
-    delays = [m.delay_ms for m in recent_measurements]
+    # Separate early and late packets for asymmetric analysis
     early_packets = [m for m in recent_measurements if m.is_early]
     late_packets = [m for m in recent_measurements if not m.is_early]
     
-    # Calculate 95th percentile delay (for symmetric window calculation)
+    # Calculate packet timing ratios
+    total_packets = len(recent_measurements)
+    early_ratio = len(early_packets) / total_packets if total_packets > 0 else 0.0
+    late_ratio = len(late_packets) / total_packets if total_packets > 0 else 0.0
+    
+    # Update timing statistics
+    adaptive_delay_state.early_packet_ratio = early_ratio
+    adaptive_delay_state.late_packet_ratio = late_ratio
+    
+    if adaptive_delay_state.asymmetric_adaptation_enabled:
+        # Asymmetric window calculation based on actual packet patterns
+        update_asymmetric_window(early_packets, late_packets, early_ratio, late_ratio)
+    else:
+        # Fallback to symmetric window calculation
+        update_symmetric_window(recent_measurements)
+
+function update_asymmetric_window(early_packets, late_packets, early_ratio, late_ratio):
+    # Calculate asymmetric window sizes based on actual timing patterns
+    
+    # Calculate 95th percentile delays for each direction
+    early_delays = [m.delay_ms for m in early_packets] if early_packets else [0]
+    late_delays = [m.delay_ms for m in late_packets] if late_packets else [0]
+    
+    early_delays.sort()
+    late_delays.sort()
+    
+    # Calculate percentile delays for each direction
+    early_p95 = calculate_percentile(early_delays, DELAY_PERCENTILE_TARGET)
+    late_p95 = calculate_percentile(late_delays, DELAY_PERCENTILE_TARGET)
+    
+    # Calculate jitter for each direction
+    early_jitter = calculate_jitter(early_delays) if len(early_delays) > 1 else 0
+    late_jitter = calculate_jitter(late_delays) if len(late_delays) > 1 else 0
+    
+    # Calculate required windows for each direction
+    early_safety = max(SAFETY_MARGIN_MS, early_jitter)
+    late_safety = max(SAFETY_MARGIN_MS, late_jitter)
+    
+    required_future_windows = math.ceil((early_p95 + early_safety) / HOP_INTERVAL_MS)
+    required_past_windows = math.ceil((late_p95 + late_safety) / HOP_INTERVAL_MS)
+    
+    # Apply adaptive bias based on packet ratios
+    # If more packets arrive early, increase future window
+    # If more packets arrive late, increase past window
+    bias_factor = 1.5  # Amplification factor for adaptation
+    
+    if early_ratio > late_ratio + 0.1:  # 10% threshold to avoid oscillation
+        # More early packets - bias toward future windows
+        future_bias = 1 + (early_ratio - late_ratio) * bias_factor
+        required_future_windows = int(required_future_windows * future_bias)
+    elif late_ratio > early_ratio + 0.1:
+        # More late packets - bias toward past windows  
+        past_bias = 1 + (late_ratio - early_ratio) * bias_factor
+        required_past_windows = int(required_past_windows * past_bias)
+    
+    # Apply bounds to individual window sizes
+    max_individual_windows = ADAPTIVE_DELAY_WINDOW_MAX - 1  # Reserve 1 for current window
+    bounded_future = max(0, min(required_future_windows, max_individual_windows))
+    bounded_past = max(0, min(required_past_windows, max_individual_windows))
+    
+    # Ensure total window doesn't exceed maximum
+    total_windows = bounded_past + 1 + bounded_future  # past + current + future
+    if total_windows > ADAPTIVE_DELAY_WINDOW_MAX:
+        # Proportionally reduce both sides
+        scale_factor = (ADAPTIVE_DELAY_WINDOW_MAX - 1) / (bounded_past + bounded_future)
+        bounded_past = int(bounded_past * scale_factor)
+        bounded_future = int(bounded_future * scale_factor)
+    
+    # Apply adaptive smoothing with bias toward smaller windows
+    # Use different smoothing factors for increases vs decreases to keep windows small
+    past_smoothing = calculate_adaptive_smoothing_factor(adaptive_delay_state.past_window_size, bounded_past)
+    future_smoothing = calculate_adaptive_smoothing_factor(adaptive_delay_state.future_window_size, bounded_future)
+    
+    new_past = int((1 - past_smoothing) * adaptive_delay_state.past_window_size + 
+                   past_smoothing * bounded_past)
+    new_future = int((1 - future_smoothing) * adaptive_delay_state.future_window_size + 
+                     future_smoothing * bounded_future)
+    
+    # Ensure minimum window sizes are respected
+    new_past = max(0, new_past)
+    new_future = max(0, new_future)
+    
+    # Ensure at least minimum total window size
+    total_new_window = new_past + 1 + new_future
+    if total_new_window < ADAPTIVE_DELAY_WINDOW_MIN:
+        # Distribute minimum window size evenly
+        extra_needed = ADAPTIVE_DELAY_WINDOW_MIN - total_new_window
+        past_share = extra_needed // 2
+        future_share = extra_needed - past_share
+        new_past += past_share
+        new_future += future_share
+    
+    # Update state
+    adaptive_delay_state.past_window_size = new_past
+    adaptive_delay_state.future_window_size = new_future
+    adaptive_delay_state.current_delay_window = new_past + 1 + new_future  # Total window for compatibility
+    
+    # Log asymmetric window changes
+    log_asymmetric_window_change(new_past, new_future, early_ratio, late_ratio, 
+                                early_p95, late_p95)
+
+function update_symmetric_window(recent_measurements):
+    # Fallback symmetric window calculation (original logic)
+    delays = [m.delay_ms for m in recent_measurements]
     delays.sort()
+    
     percentile_index = int(len(delays) * DELAY_PERCENTILE_TARGET / 100)
     percentile_delay = delays[min(percentile_index, len(delays) - 1)]
     
-    # Calculate network jitter (standard deviation)
     mean_delay = sum(delays) / len(delays)
     variance = sum((d - mean_delay) ** 2 for d in delays) / len(delays)
     jitter = math.sqrt(variance)
     
-    # Update network statistics
     adaptive_delay_state.network_jitter = jitter
     
-    # Calculate required delay window for symmetric operation
-    # Window covers both past and future time windows around current time
     safety_margin = max(SAFETY_MARGIN_MS, jitter)
     total_delay_allowance = percentile_delay + safety_margin
-    
-    # Convert to time windows and account for symmetric window
-    # Window size is total span, so half-window on each side of current time
     required_half_windows = math.ceil(total_delay_allowance / HOP_INTERVAL_MS)
-    required_total_windows = (required_half_windows * 2) + 1  # +1 for current window
+    required_total_windows = (required_half_windows * 2) + 1
     
-    # Apply bounds and ensure odd number for symmetric operation
     bounded_windows = max(ADAPTIVE_DELAY_WINDOW_MIN, 
                          min(required_total_windows, ADAPTIVE_DELAY_WINDOW_MAX))
     if bounded_windows % 2 == 0:
-        bounded_windows += 1  # Ensure odd number for symmetry
+        bounded_windows += 1
     
-    # Update current delay window with smoothing to prevent rapid changes
-    if adaptive_delay_state.current_delay_window == 0:
-        adaptive_delay_state.current_delay_window = bounded_windows
+    # Update symmetric window state
+    half_window = (bounded_windows - 1) // 2
+    adaptive_delay_state.past_window_size = half_window
+    adaptive_delay_state.future_window_size = half_window
+    adaptive_delay_state.current_delay_window = bounded_windows
+
+function calculate_percentile(sorted_values, percentile):
+    # Calculate percentile from sorted array
+    if not sorted_values:
+        return 0
+    index = int(len(sorted_values) * percentile / 100)
+    return sorted_values[min(index, len(sorted_values) - 1)]
+
+function calculate_jitter(delays):
+    # Calculate jitter (standard deviation) for delay array
+    if len(delays) < 2:
+        return 0
+    mean = sum(delays) / len(delays)
+    variance = sum((d - mean) ** 2 for d in delays) / len(delays)
+    return math.sqrt(variance)
+
+function calculate_adaptive_smoothing_factor(current_size, target_size):
+    # Calculate smoothing factor with bias toward smaller windows
+    # Fast shrinking, slow growing to keep windows as small as possible
+    
+    if target_size < current_size:
+        # Shrinking window - use aggressive smoothing for fast reduction
+        shrink_factor = 0.6  # 60% toward target for shrinking
+        return shrink_factor
+    elif target_size > current_size:
+        # Growing window - use conservative smoothing for slow increases
+        grow_factor = 0.2   # 20% toward target for growing
+        return grow_factor
     else:
-        # Apply exponential smoothing
-        smoothing_factor = 0.3
-        smoothed_window = int(
-            (1 - smoothing_factor) * adaptive_delay_state.current_delay_window +
-            smoothing_factor * bounded_windows
-        )
-        # Ensure result is odd for symmetry
-        if smoothed_window % 2 == 0:
-            smoothed_window += 1
-        adaptive_delay_state.current_delay_window = smoothed_window
+        # No change - minimal smoothing to maintain stability
+        return 0.1
+
+function periodic_window_optimization():
+    # Periodically attempt to shrink windows if network conditions improve
+    # Called every few measurement cycles to probe for smaller window opportunities
     
-    # Log significant changes
-    early_pct = len(early_packets) * 100 / len(recent_measurements) if recent_measurements else 0
-    if abs(bounded_windows - adaptive_delay_state.current_delay_window) > 1:
-        log_delay_window_change(adaptive_delay_state.current_delay_window, bounded_windows, 
-                               percentile_delay, jitter, early_pct)
+    if not adaptive_delay_state.asymmetric_adaptation_enabled:
+        return
+    
+    current_time = get_current_time_ms()
+    last_optimization = adaptive_delay_state.get('last_window_optimization', 0)
+    
+    # Only optimize every 30 seconds to avoid excessive probing
+    optimization_interval = 30000  # 30 seconds
+    if current_time - last_optimization < optimization_interval:
+        return
+    
+    adaptive_delay_state.last_window_optimization = current_time
+    
+    # Try temporarily smaller windows to test if they still work
+    original_past = adaptive_delay_state.past_window_size
+    original_future = adaptive_delay_state.future_window_size
+    
+    # Attempt 20% reduction in each direction (minimum 1 window reduction)
+    test_past = max(0, original_past - max(1, int(original_past * 0.2)))
+    test_future = max(0, original_future - max(1, int(original_future * 0.2)))
+    
+    # Ensure minimum total window requirement
+    test_total = test_past + 1 + test_future
+    if test_total >= ADAPTIVE_DELAY_WINDOW_MIN:
+        # Record that we're testing smaller windows
+        adaptive_delay_state.window_optimization_test = {
+            'start_time': current_time,
+            'test_past': test_past,
+            'test_future': test_future,
+            'original_past': original_past,
+            'original_future': original_future,
+            'packet_loss_baseline': adaptive_delay_state.packet_loss_rate
+        }
+        
+        # Temporarily use smaller windows
+        adaptive_delay_state.past_window_size = test_past
+        adaptive_delay_state.future_window_size = test_future
+        adaptive_delay_state.current_delay_window = test_total
+        
+        log_window_optimization_test(test_past, test_future, original_past, original_future)
+
+function evaluate_window_optimization_test():
+    # Evaluate if the window size optimization test was successful
+    optimization_test = adaptive_delay_state.get('window_optimization_test')
+    if not optimization_test:
+        return
+    
+    current_time = get_current_time_ms()
+    test_duration = current_time - optimization_test['start_time']
+    
+    # Test for at least 5 minutes before evaluation
+    test_period = 300000  # 5 minutes
+    if test_duration < test_period:
+        return
+    
+    # Check if packet loss increased significantly during test
+    current_loss_rate = adaptive_delay_state.packet_loss_rate
+    baseline_loss_rate = optimization_test['packet_loss_baseline']
+    loss_increase = current_loss_rate - baseline_loss_rate
+    
+    # If packet loss increased by more than 2%, revert to original window size
+    loss_threshold = 0.02  # 2% increase threshold
+    if loss_increase > loss_threshold:
+        # Revert to original window sizes
+        adaptive_delay_state.past_window_size = optimization_test['original_past']
+        adaptive_delay_state.future_window_size = optimization_test['original_future']
+        adaptive_delay_state.current_delay_window = (optimization_test['original_past'] + 1 + 
+                                                    optimization_test['original_future'])
+        
+        log_window_optimization_reverted(loss_increase, loss_threshold)
+    else:
+        # Test successful - keep smaller windows
+        log_window_optimization_successful(optimization_test['test_past'], 
+                                         optimization_test['test_future'])
+    
+    # Clear test state
+    del adaptive_delay_state.window_optimization_test
 
 function get_recent_delay_measurements():
     # Get recent delay measurements for analysis

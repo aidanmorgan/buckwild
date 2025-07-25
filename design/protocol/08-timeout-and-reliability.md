@@ -329,7 +329,7 @@ function manage_flow_control_timeouts():
             send_zero_window_probe()
     
     # General window timeout
-    if current_time - flow_control_state.last_window_update > WINDOW_TIMEOUT_MS:
+    if current_time - flow_control_state.last_window_update > WINDOW_UPDATE_TIMEOUT_MS:
         handle_window_timeout()
 
 function send_zero_window_probe():

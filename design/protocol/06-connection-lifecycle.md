@@ -310,13 +310,16 @@ Session configuration parameters (session ID length, timestamp configuration, HM
 
 ```pseudocode
 function negotiate_session_configuration(local_preferences, peer_version_byte):
-    # Extract peer's configuration from version byte
-    peer_session_id_bits = (peer_version_byte >> 4) & 0x3
-    peer_timestamp_bits = (peer_version_byte >> 6) & 0x3
+    # Extract peer's configuration from version byte (updated bit allocation)
+    # Bits 0-1: Protocol version, Bits 2-3: Session ID, Bits 4-5: Timestamp, Bits 6-7: HMAC policy
+    peer_session_id_bits = (peer_version_byte >> 2) & 0x3
+    peer_timestamp_bits = (peer_version_byte >> 4) & 0x3
+    peer_hmac_policy = (peer_version_byte >> 6) & 0x3
     
     # Determine compatible configuration (prefer security/efficiency balance)
     negotiated_session_id = max(local_preferences.session_id_length, peer_session_id_bits)
     negotiated_timestamp = max(local_preferences.timestamp_config, peer_timestamp_bits)
+    negotiated_hmac_policy = max(local_preferences.hmac_policy, peer_hmac_policy)
     
     # Validate configuration compatibility
     if negotiated_session_id > SESSION_ID_64BIT or negotiated_timestamp > TIMESTAMP_32BIT:
@@ -325,15 +328,18 @@ function negotiate_session_configuration(local_preferences, peer_version_byte):
     # Update session state with negotiated configuration
     session_state.session_id_length = negotiated_session_id
     session_state.timestamp_config = negotiated_timestamp
-    session_state.header_config = create_version_byte(negotiated_session_id, negotiated_timestamp)
+    session_state.hmac_policy = negotiated_hmac_policy
+    session_state.header_config = create_version_byte(negotiated_session_id, negotiated_timestamp, negotiated_hmac_policy)
     
     return SUCCESS
 
-function create_version_byte(session_id_config, timestamp_config):
+function create_version_byte(session_id_config, timestamp_config, hmac_policy):
     # Create version byte encoding with negotiated configuration
-    version_byte = PROTOCOL_VERSION  # Bits 0-3: Protocol version
-    version_byte |= (session_id_config << 4)  # Bits 4-5: Session ID length
-    version_byte |= (timestamp_config << 6)   # Bits 6-7: Timestamp configuration
+    # Bits 0-1: Protocol version, Bits 2-3: Session ID, Bits 4-5: Timestamp, Bits 6-7: HMAC policy
+    version_byte = PROTOCOL_VERSION & 0x3         # Bits 0-1: Protocol version
+    version_byte |= (session_id_config & 0x3) << 2  # Bits 2-3: Session ID length
+    version_byte |= (timestamp_config & 0x3) << 4   # Bits 4-5: Timestamp configuration
+    version_byte |= (hmac_policy & 0x3) << 6        # Bits 6-7: HMAC policy
     
     return version_byte
 
@@ -387,7 +393,7 @@ function establish_client_connection(remote_endpoint, local_psk_fingerprints):
     # CRITICAL: This port_hop_seed provides the cryptographic randomness for per-hop port calculation
     # It is a 32-bit seed derived from PBKDF2(ECDH_shared_secret) chunks 22-23
     session_state.port_hop_seed = session_parameters.port_hop_seed
-    session_state.time_offset = session_parameters.time_sync_offset
+    session_state.time_offset = session_parameters.time_offset
     
     # Phase 4: Complete three-way handshake with challenge response
     if send_final_ack_with_challenge_response():

@@ -131,7 +131,6 @@ PBKDF2_ITERATIONS_SEQUENCE = 2048       // PBKDF2 iterations for sequence number
 PBKDF2_ITERATIONS_PORT = 2048           // PBKDF2 iterations for port offset derivation
 KEY_EXCHANGE_TIMEOUT_MS = 10000         // ECDH key exchange timeout (10 seconds)
 SHARED_SECRET_VERIFY_SIZE = 32          // Size of shared secret verification hash
-FRAGMENT_TIMEOUT_MS = 30000             // Fragment reassembly timeout (30 seconds - used in: 07-data-transmission.md, 08-timeout-and-reliability.md)
 BLOCK_DURATION_MS = 300000              // Block duration for enumeration attempts (5 minutes)
 REPLAY_THRESHOLD = 5                    // Threshold for replay attack detection
 
@@ -152,9 +151,17 @@ REKEY_TIMEOUT_MS = 10000                // Session rekey timeout
 
 // Fragmentation constants
 MAX_FRAGMENT_SIZE = 1400                // Maximum fragment payload size (bytes)
+MAX_FRAGMENTS_PER_PACKET = 16           // Maximum fragments per reassembled packet (security limit)
+MIN_FRAGMENT_SIZE = 64                  // Minimum fragment payload size (prevents tiny fragment attacks)
 FRAGMENT_REASSEMBLY_BUFFER_SIZE = 64    // Maximum fragments in reassembly buffer
 FRAGMENT_ID_SPACE = 0xFFFF              // Fragment ID space (16-bit)
 FRAGMENT_DUPLICATE_WINDOW = 100         // Window for detecting duplicate fragments
+FRAGMENT_TIMEOUT_MS = 5000              // Fragment reassembly timeout (5 seconds - security hardened)
+MAX_REASSEMBLY_MEMORY_PER_SESSION = 1048576  // Maximum memory for reassembly per session (1MB)
+MAX_CONCURRENT_REASSEMBLIES_GLOBAL = 1000    // Maximum concurrent reassemblies system-wide
+MAX_CONCURRENT_REASSEMBLIES_PER_SESSION = 10 // Maximum concurrent reassemblies per session
+FRAGMENT_ARRIVAL_RATE_LIMIT = 20        // Maximum fragments per second per source
+MAX_TOTAL_REASSEMBLED_SIZE = 65536      // Maximum size of reassembled packet (64KB)
 
 // Session ID configuration
 SESSION_ID_16BIT = 0                    // 16-bit session ID (2 bytes, 65K sessions)
@@ -172,7 +179,7 @@ TIMESTAMP_32BIT = 2                     // 32-bit timestamp (4 bytes, full month
 // Three distinct HMAC policies for different security/performance requirements
 HMAC_LIGHT = 1                         // 64-bit HMAC-SHA256, 128-bit key, minimal authentication (8 bytes output)
 HMAC_MEDIUM = 2                        // 128-bit HMAC-SHA256, 256-bit key, standard authentication (16 bytes output)  
-HMAC_STRONG = 3                        // 256-bit HMAC-SHA512, 512-bit key, maximum authentication (32 bytes output)
+HMAC_STRONG = 3                        // 256-bit HMAC-SHA256, 256-bit key, maximum authentication (32 bytes output)
 
 // HMAC Policy Output Lengths
 HMAC_LIGHT_OUTPUT_SIZE = 8             // 64 bits (8 bytes)
@@ -182,12 +189,12 @@ HMAC_STRONG_OUTPUT_SIZE = 32           // 256 bits (32 bytes)
 // HMAC Policy Key Lengths
 HMAC_LIGHT_KEY_SIZE = 16               // 128 bits (16 bytes)
 HMAC_MEDIUM_KEY_SIZE = 32              // 256 bits (32 bytes)
-HMAC_STRONG_KEY_SIZE = 64              // 512 bits (64 bytes)
+HMAC_STRONG_KEY_SIZE = 32              // 256 bits (32 bytes) - consistent with SHA256
 
 // HMAC Policy Algorithm Specifications:
 // HMAC_LIGHT: HMAC-SHA256 truncated to 64 bits with 128-bit key
 // HMAC_MEDIUM: HMAC-SHA256 truncated to 128 bits with 256-bit key
-// HMAC_STRONG: HMAC-SHA512 truncated to 256 bits with 512-bit key
+// HMAC_STRONG: HMAC-SHA256 truncated to 256 bits with 256-bit key
 
 // Connection Context Hash Size (used in HMAC_STRONG)
 CONNECTION_CONTEXT_HASH_SIZE = 32      // 256 bits (32 bytes)
@@ -220,12 +227,13 @@ RECOVERY_TIMEOUT_EXTENSION_MS = 5000    // Recovery timeout extension (5 seconds
 // Consolidated timeout constants (removing duplicates)
 // KEY_EXCHANGE_TIMEOUT_MS covers all ECDH operations including connection establishment
 
-// Discovery states
-DISCOVERY_IDLE = 0                      // No discovery in progress
-DISCOVERY_INITIATED = 1                 // Discovery initiated, waiting for response
-DISCOVERY_RESPONDED = 2                 // Discovery response received, waiting for confirmation
-DISCOVERY_COMPLETED = 3                 // Discovery completed, PSK selected
-DISCOVERY_FAILED = 4                    // Discovery failed, no common PSK found
+// Discovery states (aligned with connection lifecycle sub-states)
+DISCOVERY_SUB_STATE_IDLE = 0            // No discovery in progress
+DISCOVERY_SUB_STATE_REQUEST = 1         // Discovery initiated, waiting for response
+DISCOVERY_SUB_STATE_RESPONSE = 2        // Discovery response received, processing
+DISCOVERY_SUB_STATE_CONFIRM = 3         // Discovery confirmation sent/received
+DISCOVERY_SUB_STATE_COMPLETED = 4       // Discovery completed, PSK selected
+DISCOVERY_SUB_STATE_FAILED = 5          // Discovery failed, no common PSK found
 
 // Packet type definitions (as defined in 03-packet-architecture.md)
 PACKET_TYPE_SYN = 0x01                  // Connection establishment
@@ -248,8 +256,8 @@ CONTROL_SUB_RECOVERY = 0x03             // Session recovery
 CONTROL_SUB_SEQUENCE_NEG = 0x04         // Sequence number negotiation
 
 // Reserved CONTROL sub-types (for future use)
-// CONTROL_SUB_RESERVED_05 = 0x05       // Reserved for future HMAC policy operations
-// CONTROL_SUB_RESERVED_06 = 0x06       // Reserved for future HMAC policy acknowledgments
+CONTROL_SUB_HMAC_POLICY_REQUEST = 0x05  // HMAC policy change request
+CONTROL_SUB_HMAC_POLICY_RESPONSE = 0x06 // HMAC policy change acknowledgment
 
 // MANAGEMENT packet sub-types
 MANAGEMENT_SUB_REKEY_REQUEST = 0x01     // Session key rotation request
@@ -377,7 +385,6 @@ ERROR_ECDH_KEY_EXCHANGE_FAILED = 0x14
 ERROR_DISCOVERY_TIMEOUT = 0x15
 ERROR_ECDH_VERIFICATION_FAILED = 0x16
 ERROR_PSK_ENUMERATION_ATTEMPT = 0x17
-ERROR_AUTHENTICATION_FAILED = 0x18
 
 // CONTROL packet sub-type errors
 ERROR_TIME_SYNC_REQUEST_FAILED = 0x19
@@ -431,59 +438,60 @@ ERROR_INVALID_SUB_TYPE = 0x3A
 ERROR_PAYLOAD_TOO_LARGE = 0x3B
 ERROR_EMPTY_DATA_PACKET = 0x3C
 ERROR_INVALID_SESSION_ID = 0x3D
+ERROR_PACKET_TOO_LARGE = 0x3E
 
 // Additional error codes for edge case handling and recovery
-ERROR_TIME_RESYNC_TIMEOUT = 0x3E
-ERROR_TIME_RESYNC_INVALID_CHALLENGE = 0x3F
-ERROR_TIME_RESYNC_OFFSET_TOO_LARGE = 0x40
-ERROR_TIME_RESYNC_VERIFICATION_FAILED = 0x41
-ERROR_SEQUENCE_REPAIR_TIMEOUT = 0x42
-ERROR_SEQUENCE_REPAIR_INVALID_NONCE = 0x43
-ERROR_SEQUENCE_REPAIR_INVALID_CONFIRMATION = 0x44
-ERROR_REKEY_TIMEOUT = 0x45
-ERROR_REKEY_INVALID_NONCE = 0x46
-ERROR_REKEY_INVALID_KEY = 0x47
-ERROR_REKEY_SHARED_SECRET_MISMATCH = 0x48
-ERROR_RECOVERY_ALREADY_IN_PROGRESS = 0x49
-ERROR_RECOVERY_RETRY_SCHEDULED = 0x4A
-ERROR_SESSION_UNRECOVERABLE = 0x4B
-ERROR_INVALID_RECOVERY_LEVEL = 0x4C
-ERROR_REPLAY_ATTACK_DETECTED = 0x4D
-ERROR_SOURCE_BLOCKED = 0x4E
-ERROR_INVALID_CONFIGURATION = 0x4F
-ERROR_TIMESTAMP_OUT_OF_RANGE = 0x50
-ERROR_SEQUENCE_WRAPAROUND_NOT_READY = 0x51
-ERROR_PACKET_TOO_SHORT = 0x52
-ERROR_PAYLOAD_LENGTH_MISMATCH = 0x53
-ERROR_RESERVED_FIELDS_NOT_ZERO = 0x54
-ERROR_INVALID_FLAG_COMBINATION = 0x55
-ERROR_FRAGMENT_INDEX_OUT_OF_BOUNDS = 0x56
-ERROR_TOO_MANY_FRAGMENTS = 0x57
-ERROR_FRAGMENT_ID_COLLISION = 0x58
-ERROR_FRAGMENT_DATA_MISMATCH = 0x59
-ERROR_EMPTY_FINAL_FRAGMENT = 0x5A
-ERROR_CLOCK_REGRESSION_DETECTED = 0x5B
-ERROR_RECOVERY_DURING_TERMINATION = 0x5C
-ERROR_RECOVERY_ATTEMPTS_EXHAUSTED = 0x5D
-ERROR_CRITICAL_OPERATION_INTERRUPTED = 0x5E
-ERROR_PORT_RANGE_EXHAUSTED = 0x5F
-ERROR_PERMISSION_DENIED = 0x60
-ERROR_NO_AVAILABLE_PORTS = 0x61
-ERROR_ADDRESS_IN_USE = 0x62
-ERROR_SYSTEM_SHUTTING_DOWN = 0x63
-ERROR_VERSION_TOO_OLD = 0x64
-ERROR_VERSION_TOO_NEW = 0x65
-ERROR_SEND_BUFFER_OVERFLOW = 0x66
-ERROR_RESOURCE_EXHAUSTED = 0x67
-ERROR_BUFFER_FULL = 0x68
-ERROR_BUFFER_EMPTY = 0x69
-ERROR_TIMESTAMP_ATTACK_DETECTED = 0x6A
-ERROR_INVALID_CRYPTO_PARAMETERS = 0x6B
-ERROR_AUTH_LOCKOUT = 0x6C
-ERROR_INVALID_PUBLIC_KEY = 0x6D
+ERROR_TIME_RESYNC_TIMEOUT = 0x3F
+ERROR_TIME_RESYNC_INVALID_CHALLENGE = 0x40
+ERROR_TIME_RESYNC_OFFSET_TOO_LARGE = 0x41
+ERROR_TIME_RESYNC_VERIFICATION_FAILED = 0x42
+ERROR_SEQUENCE_REPAIR_TIMEOUT = 0x43
+ERROR_SEQUENCE_REPAIR_INVALID_NONCE = 0x44
+ERROR_SEQUENCE_REPAIR_INVALID_CONFIRMATION = 0x45
+ERROR_REKEY_TIMEOUT = 0x46
+ERROR_REKEY_INVALID_NONCE = 0x47
+ERROR_REKEY_INVALID_KEY = 0x48
+ERROR_REKEY_SHARED_SECRET_MISMATCH = 0x49
+ERROR_RECOVERY_ALREADY_IN_PROGRESS = 0x4A
+ERROR_RECOVERY_RETRY_SCHEDULED = 0x4B
+ERROR_SESSION_UNRECOVERABLE = 0x4C
+ERROR_INVALID_RECOVERY_LEVEL = 0x4D
+ERROR_REPLAY_ATTACK_DETECTED = 0x4E
+ERROR_SOURCE_BLOCKED = 0x4F
+ERROR_INVALID_CONFIGURATION = 0x50
+ERROR_TIMESTAMP_OUT_OF_RANGE = 0x51
+ERROR_SEQUENCE_WRAPAROUND_NOT_READY = 0x52
+ERROR_PACKET_TOO_SHORT = 0x53
+ERROR_PAYLOAD_LENGTH_MISMATCH = 0x54
+ERROR_RESERVED_FIELDS_NOT_ZERO = 0x55
+ERROR_INVALID_FLAG_COMBINATION = 0x56
+ERROR_FRAGMENT_INDEX_OUT_OF_BOUNDS = 0x57
+ERROR_TOO_MANY_FRAGMENTS = 0x58
+ERROR_FRAGMENT_ID_COLLISION = 0x59
+ERROR_FRAGMENT_DATA_MISMATCH = 0x5A
+ERROR_EMPTY_FINAL_FRAGMENT = 0x5B
+ERROR_CLOCK_REGRESSION_DETECTED = 0x5C
+ERROR_RECOVERY_DURING_TERMINATION = 0x5D
+ERROR_RECOVERY_ATTEMPTS_EXHAUSTED = 0x5E
+ERROR_CRITICAL_OPERATION_INTERRUPTED = 0x5F
+ERROR_PORT_RANGE_EXHAUSTED = 0x60
+ERROR_PERMISSION_DENIED = 0x61
+ERROR_NO_AVAILABLE_PORTS = 0x62
+ERROR_ADDRESS_IN_USE = 0x63
+ERROR_SYSTEM_SHUTTING_DOWN = 0x64
+ERROR_VERSION_TOO_OLD = 0x65
+ERROR_VERSION_TOO_NEW = 0x66
+ERROR_SEND_BUFFER_OVERFLOW = 0x67
+ERROR_RESOURCE_EXHAUSTED = 0x68
+ERROR_BUFFER_FULL = 0x69
+ERROR_BUFFER_EMPTY = 0x6A
+ERROR_TIMESTAMP_ATTACK_DETECTED = 0x6B
+ERROR_INVALID_CRYPTO_PARAMETERS = 0x6C
+ERROR_AUTH_LOCKOUT = 0x6D
+ERROR_INVALID_PUBLIC_KEY = 0x6E
 
 // Connection termination error
-ERROR_CONNECTION_TERMINATE = 0x6E
+ERROR_CONNECTION_TERMINATE = 0x6F
 
 // Additional constants for edge case handling
 MAX_ERROR_RESPONSES = 3                      // Maximum error responses to prevent loops

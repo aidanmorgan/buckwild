@@ -33,6 +33,7 @@ All packet types and sub-types are defined in 02-core-definitions.md:
 **CONTROL packet sub-types:**
 - CONTROL_SUB_TIME_SYNC_REQUEST = 0x01, CONTROL_SUB_TIME_SYNC_RESPONSE = 0x02
 - CONTROL_SUB_RECOVERY = 0x03, CONTROL_SUB_SEQUENCE_NEG = 0x04
+- CONTROL_SUB_HMAC_POLICY_REQUEST = 0x05, CONTROL_SUB_HMAC_POLICY_RESPONSE = 0x06
 
 **MANAGEMENT packet sub-types:**
 - MANAGEMENT_SUB_REKEY_REQUEST = 0x01, MANAGEMENT_SUB_REKEY_RESPONSE = 0x02
@@ -133,7 +134,7 @@ Long-lived:     46 bytes (18 + 8-byte ID + 4-byte TS + 16-byte HMAC)
 Packets are classified into security levels that determine HMAC requirements:
 
 ```pseudocode
-PACKET_CLASS_CRITICAL:   // Always full HMAC (128-bit)
+PACKET_CLASS_CRITICAL:   // Always HMAC_STRONG (256-bit)
 - SYN, SYN_ACK, FIN packets
 - DISCOVERY packets  
 - REKEY operations
@@ -144,7 +145,7 @@ PACKET_CLASS_CONTROL:    // Strong HMAC minimum (64-bit)
 - REPAIR operations
 
 PACKET_CLASS_DATA:       // Adaptive HMAC (64-bit/8-byte default)
-- DATA packets between full HMAC intervals
+- DATA packets between periodic HMAC_STRONG intervals
 - ACK packets for data
 ```
 
@@ -152,11 +153,11 @@ PACKET_CLASS_DATA:       // Adaptive HMAC (64-bit/8-byte default)
 
 ```pseudocode
 HMAC Selection Algorithm:
-1. Critical packets: Always use HMAC_FULL (128-bit)
-2. Control packets: Use HMAC_STRONG (64-bit) minimum
+1. Critical packets: Always use HMAC_STRONG (256-bit)
+2. Control packets: Use HMAC_MEDIUM (128-bit) minimum
 3. Data packets: Use HMAC_LIGHT (64-bit/8-byte) with periodic full verification
 
-Periodic Full HMAC Triggers (coordinated between peers):
+Periodic HMAC_STRONG Triggers (coordinated between peers):
 - Every 100 data packets (both peers count independently)
 - Every 5 seconds of activity (synchronized using protocol timestamps)
 - After any HMAC verification failure (triggered by receiving peer)
@@ -165,8 +166,8 @@ Periodic Full HMAC Triggers (coordinated between peers):
 Peer Coordination:
 - Peers maintain independent packet counters for the 100-packet trigger
 - Time-based triggers use protocol timestamps to ensure synchronization
-- HMAC failure triggers cause the receiving peer to require full HMAC on subsequent packets
-- Both peers automatically use full HMAC during month boundary transition periods
+- HMAC failure triggers cause the receiving peer to require HMAC_STRONG on subsequent packets
+- Both peers automatically use HMAC_STRONG during month boundary transition periods
 ```
 
 ## Conditional Fields
@@ -244,7 +245,7 @@ Daily Boundary Transition (Base Port Hopping):
 
 Month Boundary Transition (Session Packets):
 1. One hour before month end: Begin transition preparation
-2. Force full HMAC for all packets during transition window
+2. Force HMAC_STRONG for all packets during transition window
 3. Accept timestamps from both old and new month epochs
 4. Log transition and notify active sessions
 5. Reset timestamp epoch to new month start
@@ -588,7 +589,7 @@ FIN Packet Structure (Big-Endian):
 Field Details:
 - Flags: FIN flag (bit 0) set
 - Final Sequence Number: Last sequence number to be sent
-- HMAC: Always full 128-bit for critical packets
+- HMAC: Always HMAC_STRONG (256-bit) for critical packets
 
 Total Size: Adaptive header + 4 bytes payload
 ```
@@ -769,7 +770,33 @@ RECOVERY (Sub-Type 0x03):
 |     (8-bit)      |   (24-bit)   |
 +-------------------+---------------+
 
-Total Size: Adaptive header + 16 bytes payload (varies by sub-type)
+HMAC_POLICY_REQUEST (Sub-Type 0x05):
++-----------------------------------+
+|    Request Nonce (32-bit)        |
++-----------------------------------+
+| Current Policy | Requested Policy|
+|    (8-bit)    |     (8-bit)     |
++----------------+-----------------+
+|     Reason Code (8-bit)          |
++-----------------------------------+
+|    Effective Time (32-bit)       |
++-----------------------------------+
+|    Challenge Data (64-bit)       |
++-----------------------------------+
+
+HMAC_POLICY_RESPONSE (Sub-Type 0x06):
++-----------------------------------+
+|    Request Nonce (32-bit)        |
++-----------------------------------+
+| Response Code | New/Rejected     |
+|    (8-bit)   | Policy (8-bit)   |
++---------------+------------------+
+|    Effective Time (32-bit)       |
++-----------------------------------+
+|  Challenge Response (64-bit)     |
++-----------------------------------+
+
+Total Size: Adaptive header + 16-20 bytes payload (varies by sub-type)
 ```
 
 ### MANAGEMENT Packet (Type 0x0D)
