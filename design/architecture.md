@@ -45,6 +45,7 @@ Applications MUST remain unaware of the protocol implementation. The system SHAL
 - All connection state, buffering, and reliability SHALL be handled by the daemon
 - Each protocol packet SHALL be an independent IP datagram with port hopping
 - The daemon SHALL provide TCP reliability semantics over unreliable datagram transport
+- The daemon MUST allow multiple sessions to exist between the same hosts
 
 #### Application Interface Requirements
 
@@ -61,7 +62,7 @@ The system SHALL be designed for maximum performance through:
 - Packet processing SHALL use zero-copy direct memory access
 - Kernel-space packet filtering SHALL use eBPF acceleration
 - Syscall overhead SHALL be amortized across batch operations
-- Memory allocation SHALL optimize for NUMA locality
+- Memory allocation SHALL optimize for NUMA locality when available
 
 ### Security by Design
 
