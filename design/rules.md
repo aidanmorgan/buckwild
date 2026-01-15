@@ -456,9 +456,48 @@ pub fn write_wal(...) -> Result<(), WalError> { ... }
 - Document unsafe blocks, invariants, and performance-critical sections.
 - Enforce zero warnings in CI and locally (e.g., `RUSTFLAGS=-Dwarnings`) so new warnings cannot land.
 
+## Tool Configuration - READ ONLY
+
+**Agents must NEVER modify static analysis or linting tool configurations.**
+
+The following files and configurations are READ ONLY. Agents must treat them as immutable:
+
+| File/Pattern | Purpose |
+|--------------|---------|
+| `clippy.toml` | Clippy lint configuration |
+| `rustfmt.toml` | Rust formatting configuration |
+| `.rustfmt.toml` | Rust formatting configuration (alternate location) |
+| `rust-toolchain.toml` | Rust toolchain version pinning |
+| `.clang-format` | C/C++ formatting configuration |
+| `.clang-tidy` | C/C++ static analysis configuration |
+| `pyproject.toml` (tool sections) | Python linting/formatting configuration (ruff, black, mypy, etc.) |
+| `.ruff.toml` | Ruff linter configuration |
+| `ruff.toml` | Ruff linter configuration |
+| `.pylintrc` | Pylint configuration |
+| `setup.cfg` (tool sections) | Python tool configuration |
+| `.editorconfig` | Editor configuration |
+| `.pre-commit-config.yaml` | Pre-commit hook configuration |
+| `deny.toml` | cargo-deny configuration |
+| `.cargo/config.toml` | Cargo configuration |
+| `CMakeLists.txt` (compiler flags) | C/C++ compiler warning flags |
+
+**Why this rule exists:**
+- Tool configurations define project-wide quality standards agreed upon by the team.
+- Modifying configurations to silence warnings bypasses code review and weakens quality gates.
+- Agents may be tempted to disable lints rather than fix underlying code issues.
+- Configuration changes have project-wide impact and require human review.
+
+**What agents MUST do instead:**
+- Fix the underlying code issue that triggered the lint or warning.
+- If a lint appears genuinely incorrect, report it to the coordinator for human review.
+- Never add `#[allow(...)]`, `// NOLINT`, `# noqa`, `@SuppressWarnings`, or equivalent suppressions.
+- Never modify compiler flags to reduce warning levels.
+
+**Violation of this rule is grounds for immediate task failure.**
+
 ## Enhanced Linting and Documentation Standards
 
-### Comprehensive Linting Configuration
+### Linting Configuration
 
 Use enhanced clippy lints for better code quality:
 ```rust
@@ -485,7 +524,7 @@ Configure `clippy.toml` in the project root to customize lint behavior:
 
 ### Documentation Requirements
 
-- ALL public APIs MUST have comprehensive documentation with examples
+- ALL public APIs MUST have complete documentation with examples
 - Module-level documentation MUST explain the module's purpose and provide usage examples
 - Function documentation MUST include:
   - Purpose and behavior description
@@ -494,7 +533,7 @@ Configure `clippy.toml` in the project root to customize lint behavior:
   - Error conditions and edge cases
   - Usage examples for complex APIs
 
-Example of comprehensive documentation:
+Documentation example:
 ```rust
 //! Metrics collection and reporting utilities.
 //! 
@@ -549,7 +588,7 @@ regs.counters
 
 ### Type Safety Enhancements
 
-Enhance domain types with comprehensive validation:
+Enhance domain types with full validation:
 ```rust
 impl Port {
     /// Create a new Port, validating that it's not zero or privileged.

@@ -1,23 +1,50 @@
-cmake_minimum_required(VERSION 3.0.0 FATAL_ERROR)
+# src/net/ssd/CMakeLists.txt
+# Network SSD (Secure Socket Daemon) components
 
-project(driver VERSION 0.1.0 LANGUAGES C)
-set(CMAKE_C_STANDARD 11)
-set(CMAKE_C_STANDARD_REQUIRED ON)
+cmake_minimum_required(VERSION 3.16)
+project(buckwild_netssd C)
+
+# Define workspace root (can be overridden via -DWORKSPACE_ROOT=...)
+if(NOT DEFINED WORKSPACE_ROOT)
+    set(WORKSPACE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
+endif()
+
+# Add custom CMake modules
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 # Find kernel headers
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
-find_package(KernelHeaders REQUIRED)
-include_directories(${KERNELHEADERS_INCLUDE_DIRS} "${CMAKE_CURRENT_SOURCE_DIR}/include")
+include(FindKernelHeaders)
 
-set(DRIVER_FILE netssd.ko)
-set(KBUILD_CMD $(MAKE) -C ${KERNELHEADERS_DIR} modules M=${CMAKE_CURRENT_BINARY_DIR} src=${CMAKE_CURRENT_SOURCE_DIR})
+# Find OpenSSL (required for crypto)
+find_package(OpenSSL REQUIRED)
 
-# Generate the Kbuild file through cmake.
-FILE(WRITE ${CMAKE_CURRENT_SOURCE_DIR}/Kbuild "obj-m := netssd.o")
+# Set compiler warning flags
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wpedantic")
 
-add_custom_command(OUTPUT ${DRIVER_FILE}
-        COMMAND ${KBUILD_CMD}
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-        DEPENDS netssd.c VERBATIM)
+# Create network SSD library
+add_library(buckwild_netssd SHARED
+    netssd.c
+    ${WORKSPACE_ROOT}/src/common/c/port_hopping.c
+    ${WORKSPACE_ROOT}/src/common/c/crypto/hmac.c
+    ${WORKSPACE_ROOT}/src/common/c/crypto/kdf.c
+    ${WORKSPACE_ROOT}/src/common/c/crypto/secure_memory.c
+    ${WORKSPACE_ROOT}/src/common/c/buffer.c
+    ${WORKSPACE_ROOT}/src/common/c/time_utils.c
+)
 
-add_custom_target(driver ALL DEPENDS ${DRIVER_FILE})
+target_include_directories(buckwild_netssd PUBLIC
+    ${WORKSPACE_ROOT}/include
+    ${KERNEL_HEADERS_INCLUDE_DIRS}
+)
+
+target_link_libraries(buckwild_netssd PUBLIC
+    OpenSSL::SSL
+    OpenSSL::Crypto
+)
+
+# Install library
+install(
+    TARGETS buckwild_netssd
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    COMPONENT runtime
+)

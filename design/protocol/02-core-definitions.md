@@ -247,6 +247,18 @@ PACKET_TYPE_RST = 0x0B                  // Reset connection
 PACKET_TYPE_CONTROL = 0x0C              // Control operations (TIME_SYNC, RECOVERY, etc.)
 PACKET_TYPE_MANAGEMENT = 0x0D           // Management operations (REKEY, REPAIR)
 PACKET_TYPE_DISCOVERY = 0x0E            // PSK discovery with sub-types
+PACKET_TYPE_FRAGMENT = 0x0F             // Fragment packet for large data transmission
+
+// Fragment packet structure (PACKET_TYPE_FRAGMENT = 0x0F)
+// Fragment packets are used when data exceeds the MTU and must be split across multiple packets.
+// The fragment header contains:
+//   - Fragment ID (16-bit): Unique identifier for this fragmented message (allows distinguishing multiple concurrent fragmentations)
+//   - Fragment Index (16-bit): Zero-based index of this fragment within the message (0 = first fragment)
+//   - Total Fragments (16-bit): Total number of fragments in the complete message
+//   - Reserved (16-bit): Must be 0x0000 for future extensibility
+// Fragment reassembly timeout: FRAGMENT_TIMEOUT_MS (5 seconds)
+// Maximum fragments per message: MAX_FRAGMENTS_PER_PACKET (16 fragments for security)
+// Fragment size constraints: MIN_FRAGMENT_SIZE (64 bytes) to MAX_FRAGMENT_SIZE (1400 bytes)
 
 // Packet sub-type definitions (as defined in 03-packet-architecture.md)
 // CONTROL packet sub-types
@@ -271,7 +283,7 @@ DISCOVERY_SUB_RESPONSE = 0x02           // PSK discovery response
 DISCOVERY_SUB_CONFIRM = 0x03            // PSK discovery confirmation
 
 // Protocol validation constants
-PACKET_TYPE_MAX = 0x0E                  // Maximum valid packet type value (DISCOVERY = 0x0E)
+PACKET_TYPE_MAX = 0x0F                  // Maximum valid packet type value (FRAGMENT = 0x0F)
 MAX_SESSION_ID_GENERATION_ATTEMPTS = 100 // Max attempts to generate unique ID
 SESSION_ID_CLEANUP_INTERVAL_MS = 3600000 // ID cleanup interval (1 hour)
 ```

@@ -1,0 +1,424 @@
+version: '3.8'
+
+networks:
+  buckwild-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          gateway: 172.30.0.1
+  observability:
+    external: true
+    name: docker_observability
+
+volumes:
+  node-1-config:
+  node-1-logs:
+  node-2-config:
+  node-2-logs:
+  node-3-config:
+  node-3-logs:
+  node-4-config:
+  node-4-logs:
+  node-5-config:
+  node-5-logs:
+  node-6-config:
+  node-6-logs:
+  node-7-config:
+  node-7-logs:
+  node-8-config:
+  node-8-logs:
+  node-9-config:
+  node-9-logs:
+  node-10-config:
+  node-10-logs:
+
+x-buckwild-node: &buckwild-node
+  image: buckwild-runtime:latest
+  cap_add:
+    - NET_ADMIN
+    - BPF
+  devices:
+    - /dev/net/tun
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+    interval: 30s
+    timeout: 3s
+    retries: 3
+    start_period: 10s
+  restart: unless-stopped
+  deploy:
+    resources:
+      limits:
+        cpus: '0.5'
+        memory: 512M
+      reservations:
+        cpus: '0.25'
+        memory: 256M
+
+x-otel-collector: &otel-collector
+  image: otel/opentelemetry-collector-contrib:0.91.0
+  command: ["--config=/etc/otel-collector-config.yaml"]
+  volumes:
+    - ../otel/collector-config.yaml:/etc/otel-collector-config.yaml
+  ports:
+    - "4317"  # OTLP gRPC receiver (internal only)
+    - "4318"  # OTLP HTTP receiver (internal only)
+  healthcheck:
+    test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 10s
+  restart: unless-stopped
+
+services:
+  # Node 1 - Buckwild VPN Node
+  node-1:
+    <<: *buckwild-node
+    container_name: buckwild-node-1
+    hostname: node-1
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.10
+      observability:
+    ports:
+      - "2221:22"
+    volumes:
+      - node-1-config:/etc/buckwild
+      - node-1-logs:/var/log/buckwild
+    environment:
+      - NODE_ID=node-1
+      - NODE_IP=172.30.0.10
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector-node-1:4317
+      - OTEL_SERVICE_NAME=buckwild-node-1
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=topology-test,node.id=1
+      - RUST_LOG=info
+    depends_on:
+      otel-collector-node-1:
+        condition: service_healthy
+
+  # OTEL Collector Sidecar for Node 1
+  otel-collector-node-1:
+    <<: *otel-collector
+    container_name: otel-collector-node-1
+    hostname: otel-collector-node-1
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.20
+      observability:
+
+  # Node 2 - Buckwild VPN Node
+  node-2:
+    <<: *buckwild-node
+    container_name: buckwild-node-2
+    hostname: node-2
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.11
+      observability:
+    ports:
+      - "2222:22"
+    volumes:
+      - node-2-config:/etc/buckwild
+      - node-2-logs:/var/log/buckwild
+    environment:
+      - NODE_ID=node-2
+      - NODE_IP=172.30.0.11
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector-node-2:4317
+      - OTEL_SERVICE_NAME=buckwild-node-2
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=topology-test,node.id=2
+      - RUST_LOG=info
+    depends_on:
+      otel-collector-node-2:
+        condition: service_healthy
+
+  # OTEL Collector Sidecar for Node 2
+  otel-collector-node-2:
+    <<: *otel-collector
+    container_name: otel-collector-node-2
+    hostname: otel-collector-node-2
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.21
+      observability:
+
+  # Node 3 - Buckwild VPN Node
+  node-3:
+    <<: *buckwild-node
+    container_name: buckwild-node-3
+    hostname: node-3
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.12
+      observability:
+    ports:
+      - "2223:22"
+    volumes:
+      - node-3-config:/etc/buckwild
+      - node-3-logs:/var/log/buckwild
+    environment:
+      - NODE_ID=node-3
+      - NODE_IP=172.30.0.12
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector-node-3:4317
+      - OTEL_SERVICE_NAME=buckwild-node-3
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=topology-test,node.id=3
+      - RUST_LOG=info
+    depends_on:
+      otel-collector-node-3:
+        condition: service_healthy
+
+  # OTEL Collector Sidecar for Node 3
+  otel-collector-node-3:
+    <<: *otel-collector
+    container_name: otel-collector-node-3
+    hostname: otel-collector-node-3
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.22
+      observability:
+
+  # Node 4 - Buckwild VPN Node
+  node-4:
+    <<: *buckwild-node
+    container_name: buckwild-node-4
+    hostname: node-4
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.13
+      observability:
+    ports:
+      - "2224:22"
+    volumes:
+      - node-4-config:/etc/buckwild
+      - node-4-logs:/var/log/buckwild
+    environment:
+      - NODE_ID=node-4
+      - NODE_IP=172.30.0.13
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector-node-4:4317
+      - OTEL_SERVICE_NAME=buckwild-node-4
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=topology-test,node.id=4
+      - RUST_LOG=info
+    depends_on:
+      otel-collector-node-4:
+        condition: service_healthy
+
+  # OTEL Collector Sidecar for Node 4
+  otel-collector-node-4:
+    <<: *otel-collector
+    container_name: otel-collector-node-4
+    hostname: otel-collector-node-4
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.23
+      observability:
+
+  # Node 5 - Buckwild VPN Node
+  node-5:
+    <<: *buckwild-node
+    container_name: buckwild-node-5
+    hostname: node-5
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.14
+      observability:
+    ports:
+      - "2225:22"
+    volumes:
+      - node-5-config:/etc/buckwild
+      - node-5-logs:/var/log/buckwild
+    environment:
+      - NODE_ID=node-5
+      - NODE_IP=172.30.0.14
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector-node-5:4317
+      - OTEL_SERVICE_NAME=buckwild-node-5
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=topology-test,node.id=5
+      - RUST_LOG=info
+    depends_on:
+      otel-collector-node-5:
+        condition: service_healthy
+
+  # OTEL Collector Sidecar for Node 5
+  otel-collector-node-5:
+    <<: *otel-collector
+    container_name: otel-collector-node-5
+    hostname: otel-collector-node-5
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.24
+      observability:
+
+  # Node 6 - Buckwild VPN Node
+  node-6:
+    <<: *buckwild-node
+    container_name: buckwild-node-6
+    hostname: node-6
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.15
+      observability:
+    ports:
+      - "2226:22"
+    volumes:
+      - node-6-config:/etc/buckwild
+      - node-6-logs:/var/log/buckwild
+    environment:
+      - NODE_ID=node-6
+      - NODE_IP=172.30.0.15
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector-node-6:4317
+      - OTEL_SERVICE_NAME=buckwild-node-6
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=topology-test,node.id=6
+      - RUST_LOG=info
+    depends_on:
+      otel-collector-node-6:
+        condition: service_healthy
+
+  # OTEL Collector Sidecar for Node 6
+  otel-collector-node-6:
+    <<: *otel-collector
+    container_name: otel-collector-node-6
+    hostname: otel-collector-node-6
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.25
+      observability:
+
+  # Node 7 - Buckwild VPN Node
+  node-7:
+    <<: *buckwild-node
+    container_name: buckwild-node-7
+    hostname: node-7
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.16
+      observability:
+    ports:
+      - "2227:22"
+    volumes:
+      - node-7-config:/etc/buckwild
+      - node-7-logs:/var/log/buckwild
+    environment:
+      - NODE_ID=node-7
+      - NODE_IP=172.30.0.16
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector-node-7:4317
+      - OTEL_SERVICE_NAME=buckwild-node-7
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=topology-test,node.id=7
+      - RUST_LOG=info
+    depends_on:
+      otel-collector-node-7:
+        condition: service_healthy
+
+  # OTEL Collector Sidecar for Node 7
+  otel-collector-node-7:
+    <<: *otel-collector
+    container_name: otel-collector-node-7
+    hostname: otel-collector-node-7
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.26
+      observability:
+
+  # Node 8 - Buckwild VPN Node
+  node-8:
+    <<: *buckwild-node
+    container_name: buckwild-node-8
+    hostname: node-8
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.17
+      observability:
+    ports:
+      - "2228:22"
+    volumes:
+      - node-8-config:/etc/buckwild
+      - node-8-logs:/var/log/buckwild
+    environment:
+      - NODE_ID=node-8
+      - NODE_IP=172.30.0.17
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector-node-8:4317
+      - OTEL_SERVICE_NAME=buckwild-node-8
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=topology-test,node.id=8
+      - RUST_LOG=info
+    depends_on:
+      otel-collector-node-8:
+        condition: service_healthy
+
+  # OTEL Collector Sidecar for Node 8
+  otel-collector-node-8:
+    <<: *otel-collector
+    container_name: otel-collector-node-8
+    hostname: otel-collector-node-8
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.27
+      observability:
+
+  # Node 9 - Buckwild VPN Node
+  node-9:
+    <<: *buckwild-node
+    container_name: buckwild-node-9
+    hostname: node-9
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.18
+      observability:
+    ports:
+      - "2229:22"
+    volumes:
+      - node-9-config:/etc/buckwild
+      - node-9-logs:/var/log/buckwild
+    environment:
+      - NODE_ID=node-9
+      - NODE_IP=172.30.0.18
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector-node-9:4317
+      - OTEL_SERVICE_NAME=buckwild-node-9
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=topology-test,node.id=9
+      - RUST_LOG=info
+    depends_on:
+      otel-collector-node-9:
+        condition: service_healthy
+
+  # OTEL Collector Sidecar for Node 9
+  otel-collector-node-9:
+    <<: *otel-collector
+    container_name: otel-collector-node-9
+    hostname: otel-collector-node-9
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.28
+      observability:
+
+  # Node 10 - Buckwild VPN Node
+  node-10:
+    <<: *buckwild-node
+    container_name: buckwild-node-10
+    hostname: node-10
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.19
+      observability:
+    ports:
+      - "2230:22"
+    volumes:
+      - node-10-config:/etc/buckwild
+      - node-10-logs:/var/log/buckwild
+    environment:
+      - NODE_ID=node-10
+      - NODE_IP=172.30.0.19
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector-node-10:4317
+      - OTEL_SERVICE_NAME=buckwild-node-10
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=topology-test,node.id=10
+      - RUST_LOG=info
+    depends_on:
+      otel-collector-node-10:
+        condition: service_healthy
+
+  # OTEL Collector Sidecar for Node 10
+  otel-collector-node-10:
+    <<: *otel-collector
+    container_name: otel-collector-node-10
+    hostname: otel-collector-node-10
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.29
+      observability:

@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+    "src/common",
+    "src/common/ffi",
+    "src/daemon/rust",
+    "src/ebpf/rust",
+    "src/tools/rust",
+]
+exclude = [
+    "src/daemon",
+    "src/tools",
+    "src/ebpf",  # Uses aya framework - deprecated in favor of libbpf at src/ebpf/rust
+]
+default-members = [
+    "src/common",
+    "src/daemon/rust",
+    "src/tools/rust",
+]
+
+[workspace.dependencies]
+buckwild-common = { path = "src/common" }
+tokio = { version = "1.35", features = ["full"] }
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+bytes = "1.5"
+serde = { version = "1.0", features = ["derive"] }

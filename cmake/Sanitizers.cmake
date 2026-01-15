@@ -1,0 +1,88 @@
+# Sanitizer Configuration
+# Enables AddressSanitizer, UndefinedBehaviorSanitizer, and other runtime checkers
+
+option(ENABLE_ASAN "Enable AddressSanitizer (memory errors)" OFF)
+option(ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
+option(ENABLE_TSAN "Enable ThreadSanitizer (data races)" OFF)
+option(ENABLE_MSAN "Enable MemorySanitizer (uninitialized reads)" OFF)
+
+# Helper function to add sanitizer flags
+function(add_sanitizer_flags target_name)
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang" AND NOT CMAKE_C_COMPILER_ID MATCHES "GNU")
+        message(WARNING "Sanitizers are only supported with GCC and Clang")
+        return()
+    endif()
+
+    set(SANITIZER_FLAGS "")
+    set(SANITIZER_LINK_FLAGS "")
+
+    # AddressSanitizer (ASan)
+    if(ENABLE_ASAN)
+        list(APPEND SANITIZER_FLAGS "-fsanitize=address")
+        list(APPEND SANITIZER_FLAGS "-fno-omit-frame-pointer")
+        list(APPEND SANITIZER_FLAGS "-g")
+        list(APPEND SANITIZER_LINK_FLAGS "-fsanitize=address")
+        message(STATUS "AddressSanitizer enabled for ${target_name}")
+    endif()
+
+    # UndefinedBehaviorSanitizer (UBSan)
+    if(ENABLE_UBSAN)
+        list(APPEND SANITIZER_FLAGS "-fsanitize=undefined")
+        list(APPEND SANITIZER_FLAGS "-fno-omit-frame-pointer")
+        list(APPEND SANITIZER_FLAGS "-g")
+        list(APPEND SANITIZER_LINK_FLAGS "-fsanitize=undefined")
+        message(STATUS "UndefinedBehaviorSanitizer enabled for ${target_name}")
+    endif()
+
+    # ThreadSanitizer (TSan) - mutually exclusive with ASan
+    if(ENABLE_TSAN)
+        if(ENABLE_ASAN)
+            message(FATAL_ERROR "ThreadSanitizer and AddressSanitizer cannot be enabled simultaneously")
+        endif()
+        list(APPEND SANITIZER_FLAGS "-fsanitize=thread")
+        list(APPEND SANITIZER_FLAGS "-fno-omit-frame-pointer")
+        list(APPEND SANITIZER_FLAGS "-g")
+        list(APPEND SANITIZER_LINK_FLAGS "-fsanitize=thread")
+        message(STATUS "ThreadSanitizer enabled for ${target_name}")
+    endif()
+
+    # MemorySanitizer (MSan) - Clang only, mutually exclusive with ASan/TSan
+    if(ENABLE_MSAN)
+        if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
+            message(FATAL_ERROR "MemorySanitizer requires Clang")
+        endif()
+        if(ENABLE_ASAN OR ENABLE_TSAN)
+            message(FATAL_ERROR "MemorySanitizer cannot be combined with other sanitizers")
+        endif()
+        list(APPEND SANITIZER_FLAGS "-fsanitize=memory")
+        list(APPEND SANITIZER_FLAGS "-fno-omit-frame-pointer")
+        list(APPEND SANITIZER_FLAGS "-g")
+        list(APPEND SANITIZER_LINK_FLAGS "-fsanitize=memory")
+        message(STATUS "MemorySanitizer enabled for ${target_name}")
+    endif()
+
+    # Apply flags to target
+    if(SANITIZER_FLAGS)
+        target_compile_options(${target_name} PRIVATE ${SANITIZER_FLAGS})
+        target_link_options(${target_name} PRIVATE ${SANITIZER_LINK_FLAGS})
+    endif()
+endfunction()
+
+# Global sanitizer setup
+if(ENABLE_ASAN OR ENABLE_UBSAN OR ENABLE_TSAN OR ENABLE_MSAN)
+    message(STATUS "")
+    message(STATUS "Sanitizers Configuration:")
+    if(ENABLE_ASAN)
+        message(STATUS "  - AddressSanitizer: ON")
+    endif()
+    if(ENABLE_UBSAN)
+        message(STATUS "  - UndefinedBehaviorSanitizer: ON")
+    endif()
+    if(ENABLE_TSAN)
+        message(STATUS "  - ThreadSanitizer: ON")
+    endif()
+    if(ENABLE_MSAN)
+        message(STATUS "  - MemorySanitizer: ON")
+    endif()
+    message(STATUS "")
+endif()

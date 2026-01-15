@@ -1,0 +1,50 @@
+# Buckwild CMake configuration file
+
+set(BUCKWILD_VERSION "@PROJECT_VERSION@")
+set(BUCKWILD_VERSION_MAJOR "@PROJECT_VERSION_MAJOR@")
+set(BUCKWILD_VERSION_MINOR "@PROJECT_VERSION_MINOR@")
+set(BUCKWILD_VERSION_PATCH "@PROJECT_VERSION_PATCH@")
+
+# Installation paths
+set(BUCKWILD_INSTALL_PREFIX "@CMAKE_INSTALL_PREFIX@")
+set(BUCKWILD_INCLUDE_DIR "@CMAKE_INSTALL_FULL_INCLUDEDIR@")
+set(BUCKWILD_LIB_DIR "@CMAKE_INSTALL_FULL_LIBDIR@")
+set(BUCKWILD_BIN_DIR "@CMAKE_INSTALL_FULL_BINDIR@")
+
+# Build configuration
+set(BUCKWILD_BUILD_TYPE "@CMAKE_BUILD_TYPE@")
+set(BUCKWILD_ENABLE_SIMD "@ENABLE_SIMD@")
+set(BUCKWILD_ENABLE_SECURITY_HARDENING "@ENABLE_SECURITY_HARDENING@")
+
+# Find dependencies
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBBPF REQUIRED libbpf)
+
+# Define imported targets
+if(NOT TARGET buckwild::common)
+    add_library(buckwild::common INTERFACE IMPORTED)
+    set_target_properties(buckwild::common PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${BUCKWILD_INCLUDE_DIR}"
+        INTERFACE_LINK_DIRECTORIES "${BUCKWILD_LIB_DIR}"
+        INTERFACE_LINK_LIBRARIES "buckwild_common"
+    )
+endif()
+
+if(NOT TARGET buckwild::daemon)
+    add_executable(buckwild::daemon IMPORTED)
+    set_target_properties(buckwild::daemon PROPERTIES
+        IMPORTED_LOCATION "${BUCKWILD_BIN_DIR}/buckwild_daemon"
+    )
+endif()
+
+# Provide legacy variables for compatibility
+set(BUCKWILD_FOUND TRUE)
+set(BUCKWILD_LIBRARIES buckwild::common)
+set(BUCKWILD_INCLUDE_DIRS ${BUCKWILD_INCLUDE_DIR})
+
+# Check that all required components are available
+include(FindPackageHandleStandardArgs)
+find_package_handle_standard_args(buckwild
+    REQUIRED_VARS BUCKWILD_INCLUDE_DIR BUCKWILD_LIB_DIR
+    VERSION_VAR BUCKWILD_VERSION
+)

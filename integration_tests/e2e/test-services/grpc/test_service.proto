@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package testservice;
+
+// Test service for E2E gRPC protocol testing
+service TestService {
+  // Unary RPC: single request, single response
+  rpc Echo (EchoRequest) returns (EchoResponse);
+
+  // Server streaming: single request, stream of responses
+  rpc StreamNumbers (StreamRequest) returns (stream NumberResponse);
+
+  // Client streaming: stream of requests, single response
+  rpc AccumulateNumbers (stream NumberRequest) returns (AccumulateResponse);
+
+  // Bidirectional streaming: stream of requests and responses
+  rpc Chat (stream ChatMessage) returns (stream ChatMessage);
+}
+
+message EchoRequest {
+  string message = 1;
+}
+
+message EchoResponse {
+  string message = 1;
+  int64 timestamp = 2;
+}
+
+message StreamRequest {
+  int32 count = 1;
+  int32 delay_ms = 2;
+}
+
+message NumberResponse {
+  int32 number = 1;
+}
+
+message NumberRequest {
+  int32 number = 1;
+}
+
+message AccumulateResponse {
+  int32 sum = 1;
+  int32 count = 2;
+}
+
+message ChatMessage {
+  string sender = 1;
+  string message = 2;
+  int64 timestamp = 3;
+}

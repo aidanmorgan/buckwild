@@ -1,0 +1,79 @@
+# Dockerfile.test - Test environment for Buckwild with debugging tools
+# Build: docker build -f docker/Dockerfile.test -t buckwild-test:latest .
+#
+# Extends the runtime image with debugging, network analysis, and eBPF tools
+# for development, testing, and troubleshooting purposes.
+
+FROM buckwild-runtime:latest
+
+# OCI labels for metadata
+LABEL org.opencontainers.image.title="Buckwild Test"
+LABEL org.opencontainers.image.description="Test environment for Buckwild with debugging and analysis tools"
+LABEL org.opencontainers.image.vendor="Buckwild Project"
+LABEL org.opencontainers.image.source="https://github.com/buckwild/buckwild"
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.version="0.1.0"
+LABEL maintainer="buckwild@example.com"
+LABEL buckwild.component="test"
+LABEL buckwild.type="development"
+
+# Switch to root to install packages
+USER root
+
+# Install debugging, network, and eBPF tools
+# Debugging tools:
+#   gdb: GNU debugger for C/Rust debugging
+#   valgrind: Memory leak and error detection
+#   strace: System call tracing
+#   ltrace: Library call tracing
+# Network tools:
+#   tcpdump: Network packet capture and analysis
+#   iperf3: Network performance testing
+#   netcat-openbsd: TCP/UDP connection and listening
+#   nmap: Network exploration and security auditing
+#   socat: Multipurpose relay tool for network streams
+#   net-tools: Legacy network utilities (ifconfig, netstat)
+# eBPF tools:
+#   bpftool: Inspection and manipulation of eBPF programs/maps
+#   bpftrace: High-level eBPF tracing language
+#   linux-tools-generic: Kernel tools including perf
+# Utilities:
+#   jq: JSON processor for parsing structured logs
+#   less: Pager for log viewing
+#   vim-tiny: Minimal text editor
+#   procps: Process monitoring (ps, top)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gdb \
+    valgrind \
+    strace \
+    ltrace \
+    tcpdump \
+    iperf3 \
+    netcat-openbsd \
+    nmap \
+    socat \
+    net-tools \
+    bpftool \
+    bpftrace \
+    linux-tools-generic \
+    jq \
+    less \
+    vim-tiny \
+    procps \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Create directory for test artifacts
+RUN mkdir -p /var/lib/buckwild/test \
+    && chown -R buckwild:buckwild /var/lib/buckwild/test
+
+# Switch back to non-root user
+USER buckwild
+
+# Default working directory for test operations
+WORKDIR /var/lib/buckwild/test
+
+# Override entrypoint to allow flexible testing
+# Users can run arbitrary commands or start the daemon
+ENTRYPOINT []
+CMD ["/bin/bash"]

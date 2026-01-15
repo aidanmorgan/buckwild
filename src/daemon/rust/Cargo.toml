@@ -1,0 +1,107 @@
+[package]
+name = "buckwild-daemon"
+version = "0.1.0"
+edition = "2021"
+authors = ["Buckwild Protocol Team"]
+description = "Daemon for Buckwild protocol"
+license = "MIT"
+
+[lib]
+name = "buckwild_daemon"
+path = "src/lib.rs"
+
+[dependencies]
+# Internal dependencies
+buckwild-common = { path = "../../common" }
+
+# Async runtime
+tokio = { version = "1.28", features = ["full"] }
+actix = "0.13"
+actix-rt = "2.9"
+
+# Cryptography
+ring = "0.16.20"
+subtle = "2.5"
+zeroize = { version = "1.6", features = ["zeroize_derive"] }
+
+# Concurrency
+dashmap = "5.4"
+crossbeam = "0.8"
+parking_lot = "0.12"
+rayon = "1.7"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+bincode = "1.3"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-opentelemetry = "0.22"
+
+# OpenTelemetry
+opentelemetry = { version = "0.21", features = ["trace"] }
+opentelemetry-otlp = { version = "0.14", features = ["grpc-tonic"] }
+opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Networking
+socket2 = "0.4"
+futures = "0.3"
+futures-util = "0.3"
+pnet = "0.34"
+hyper = { version = "1.0", features = ["full"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+
+# Additional dependencies for TUN device
+lru = "0.12"
+
+# File system
+notify = "5.1"
+tempfile = "3.5"
+
+# Utilities
+bytes = "1.4"
+num_cpus = "1.15"
+libc = "0.2"
+bit-vec = "0.6"
+sha2 = "0.10"
+hex = "0.4"
+clap = { version = "4.0", features = ["derive"] }
+tracing-appender = "0.2"
+
+# Monitoring and Management
+rasn = "0.22"
+rasn-snmp = "0.22"
+rasn-smi = "0.22"
+num-traits = "0.2"
+syslog = "6.1"
+# prometheus = "0.13" # Commented out for now
+# metrics = "0.21" # Commented out for now
+# metrics-exporter-prometheus = "0.12" # Commented out for now
+uuid = { version = "1.4", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+serde_yaml = "0.9"
+regex = "1.9"
+once_cell = "1.18"
+
+# Linux-specific dependencies
+[target.'cfg(target_os = "linux")'.dependencies]
+buckwild-ffi = { path = "../../common/ffi" }
+buckwild-ebpf = { path = "../../ebpf/rust" }
+netlink-packet-route = "0.19"
+netlink-packet-core = "0.7"
+rtnetlink = "0.14"
+
+[dev-dependencies]
+tempfile = "3.5"
+criterion = "0.5"
+
+[build-dependencies]
+bindgen = "0.69"

@@ -1,0 +1,7 @@
+[submodule "third_party/openssl"]
+	path = third_party/openssl
+	url = https://github.com/openssl/openssl.git
+	branch = openssl-3.0
+[submodule "third_party/libbpf"]
+	path = third_party/libbpf
+	url = https://github.com/libbpf/libbpf.git

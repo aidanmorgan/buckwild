@@ -1,0 +1,136 @@
+version: '3.8'
+
+services:
+  node-a:
+    image: buckwild-e2e:latest
+    container_name: node-a
+    networks:
+      e2e-network:
+        ipv4_address: 172.30.0.10
+    volumes:
+      - ./configs/node-a.toml:/etc/buckwild/config.toml:ro
+      - ./psk:/psk:ro
+      - ./scripts:/scripts:ro
+    entrypoint: ["/scripts/entrypoint.sh"]
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  node-b:
+    image: buckwild-e2e:latest
+    container_name: node-b
+    networks:
+      e2e-network:
+        ipv4_address: 172.30.0.11
+    volumes:
+      - ./configs/node-b.toml:/etc/buckwild/config.toml:ro
+      - ./psk:/psk:ro
+      - ./scripts:/scripts:ro
+    entrypoint: ["/scripts/entrypoint.sh"]
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  node-c:
+    image: buckwild-e2e:latest
+    container_name: node-c
+    networks:
+      e2e-network:
+        ipv4_address: 172.30.0.12
+    volumes:
+      - ./configs/node-c.toml:/etc/buckwild/config.toml:ro
+      - ./psk:/psk:ro
+      - ./scripts:/scripts:ro
+    entrypoint: ["/scripts/entrypoint.sh"]
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  node-d:
+    image: buckwild-e2e:latest
+    container_name: node-d
+    networks:
+      e2e-network:
+        ipv4_address: 172.30.0.13
+    volumes:
+      - ./configs/node-d.toml:/etc/buckwild/config.toml:ro
+      - ./psk:/psk:ro
+      - ./scripts:/scripts:ro
+    entrypoint: ["/scripts/entrypoint.sh"]
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  node-e:
+    image: buckwild-e2e:latest
+    container_name: node-e
+    networks:
+      e2e-network:
+        ipv4_address: 172.30.0.14
+    volumes:
+      - ./configs/node-e.toml:/etc/buckwild/config.toml:ro
+      - ./psk:/psk:ro
+      - ./scripts:/scripts:ro
+    entrypoint: ["/scripts/entrypoint.sh"]
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  test-runner:
+    image: buckwild-e2e:latest
+    container_name: test-runner
+    networks:
+      - e2e-network
+    volumes:
+      - ./scripts:/scripts:ro
+    environment:
+      - NODES=node-a,node-b,node-c,node-d,node-e
+    command: sleep infinity
+    depends_on:
+      node-a:
+        condition: service_healthy
+      node-b:
+        condition: service_healthy
+      node-c:
+        condition: service_healthy
+      node-d:
+        condition: service_healthy
+      node-e:
+        condition: service_healthy
+
+networks:
+  e2e-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

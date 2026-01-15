@@ -1,0 +1,46 @@
+[package]
+name = "buckwild-ebpf"
+version = "0.1.0"
+edition = "2021"
+authors = ["Buckwild Protocol Team"]
+description = "eBPF integration layer for Buckwild frequency hopping network protocol - provides kernel-space packet processing"
+license = "MIT"
+repository = "https://github.com/your-org/buckwild"
+homepage = "https://github.com/your-org/buckwild"
+documentation = "https://docs.rs/buckwild-ebpf"
+keywords = ["ebpf", "networking", "kernel", "packet-processing", "xdp"]
+categories = ["network-programming", "os::linux-apis"]
+rust-version = "1.85"
+
+[dependencies]
+anyhow = "1.0"
+thiserror = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+bytes = "1.0"
+tracing = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+buckwild-common = { path = "../../common" }
+async-trait = "0.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libbpf-rs = "0.21"
+libbpf-sys = "1.2"
+libc = "0.2"
+nix = { version = "0.30", features = ["net"] }
+num_cpus = "1.16"
+
+[dev-dependencies]
+tempfile = "3.0"
+
+[target.'cfg(target_os = "linux")'.build-dependencies]
+libbpf-cargo = "0.21"
+cc = "1.0"
+
+[lib]
+name = "buckwild_ebpf"
+path = "src/lib.rs"
+
+# Binary target disabled - not yet implemented
+# [[bin]]
+# name = "ebpf-loader"
+# path = "src/bin/loader.rs"

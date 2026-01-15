@@ -1,0 +1,325 @@
+version: '3.8'
+
+networks:
+  buckwild-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          gateway: 172.30.0.1
+  observability:
+    external: true
+    name: docker_observability
+
+volumes:
+  node-1-config:
+  node-1-logs:
+  node-2-config:
+  node-2-logs:
+  node-3-config:
+  node-3-logs:
+  node-4-config:
+  node-4-logs:
+  node-5-config:
+  node-5-logs:
+
+services:
+  # Node 1 - Buckwild VPN Node
+  node-1:
+    image: buckwild-runtime:latest
+    container_name: buckwild-node-1
+    hostname: node-1
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.10
+      observability:
+    ports:
+      - "2221:22"
+    volumes:
+      - node-1-config:/etc/buckwild
+      - node-1-logs:/var/log/buckwild
+    environment:
+      - NODE_ID=node-1
+      - NODE_IP=172.30.0.10
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector-node-1:4317
+      - OTEL_SERVICE_NAME=buckwild-node-1
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=topology-test,node.id=1
+      - RUST_LOG=info
+    cap_add:
+      - NET_ADMIN
+      - BPF
+    devices:
+      - /dev/net/tun
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      otel-collector-node-1:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # OTEL Collector Sidecar for Node 1
+  otel-collector-node-1:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    container_name: otel-collector-node-1
+    hostname: otel-collector-node-1
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ../otel/collector-config.yaml:/etc/otel-collector-config.yaml
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.15
+      observability:
+    ports:
+      - "4317"  # OTLP gRPC receiver (internal only)
+      - "4318"  # OTLP HTTP receiver (internal only)
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # Node 2 - Buckwild VPN Node
+  node-2:
+    image: buckwild-runtime:latest
+    container_name: buckwild-node-2
+    hostname: node-2
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.11
+      observability:
+    ports:
+      - "2222:22"
+    volumes:
+      - node-2-config:/etc/buckwild
+      - node-2-logs:/var/log/buckwild
+    environment:
+      - NODE_ID=node-2
+      - NODE_IP=172.30.0.11
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector-node-2:4317
+      - OTEL_SERVICE_NAME=buckwild-node-2
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=topology-test,node.id=2
+      - RUST_LOG=info
+    cap_add:
+      - NET_ADMIN
+      - BPF
+    devices:
+      - /dev/net/tun
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      otel-collector-node-2:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # OTEL Collector Sidecar for Node 2
+  otel-collector-node-2:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    container_name: otel-collector-node-2
+    hostname: otel-collector-node-2
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ../otel/collector-config.yaml:/etc/otel-collector-config.yaml
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.16
+      observability:
+    ports:
+      - "4317"  # OTLP gRPC receiver (internal only)
+      - "4318"  # OTLP HTTP receiver (internal only)
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # Node 3 - Buckwild VPN Node
+  node-3:
+    image: buckwild-runtime:latest
+    container_name: buckwild-node-3
+    hostname: node-3
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.12
+      observability:
+    ports:
+      - "2223:22"
+    volumes:
+      - node-3-config:/etc/buckwild
+      - node-3-logs:/var/log/buckwild
+    environment:
+      - NODE_ID=node-3
+      - NODE_IP=172.30.0.12
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector-node-3:4317
+      - OTEL_SERVICE_NAME=buckwild-node-3
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=topology-test,node.id=3
+      - RUST_LOG=info
+    cap_add:
+      - NET_ADMIN
+      - BPF
+    devices:
+      - /dev/net/tun
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      otel-collector-node-3:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # OTEL Collector Sidecar for Node 3
+  otel-collector-node-3:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    container_name: otel-collector-node-3
+    hostname: otel-collector-node-3
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ../otel/collector-config.yaml:/etc/otel-collector-config.yaml
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.17
+      observability:
+    ports:
+      - "4317"  # OTLP gRPC receiver (internal only)
+      - "4318"  # OTLP HTTP receiver (internal only)
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # Node 4 - Buckwild VPN Node
+  node-4:
+    image: buckwild-runtime:latest
+    container_name: buckwild-node-4
+    hostname: node-4
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.13
+      observability:
+    ports:
+      - "2224:22"
+    volumes:
+      - node-4-config:/etc/buckwild
+      - node-4-logs:/var/log/buckwild
+    environment:
+      - NODE_ID=node-4
+      - NODE_IP=172.30.0.13
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector-node-4:4317
+      - OTEL_SERVICE_NAME=buckwild-node-4
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=topology-test,node.id=4
+      - RUST_LOG=info
+    cap_add:
+      - NET_ADMIN
+      - BPF
+    devices:
+      - /dev/net/tun
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      otel-collector-node-4:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # OTEL Collector Sidecar for Node 4
+  otel-collector-node-4:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    container_name: otel-collector-node-4
+    hostname: otel-collector-node-4
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ../otel/collector-config.yaml:/etc/otel-collector-config.yaml
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.18
+      observability:
+    ports:
+      - "4317"  # OTLP gRPC receiver (internal only)
+      - "4318"  # OTLP HTTP receiver (internal only)
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # Node 5 - Buckwild VPN Node
+  node-5:
+    image: buckwild-runtime:latest
+    container_name: buckwild-node-5
+    hostname: node-5
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.14
+      observability:
+    ports:
+      - "2225:22"
+    volumes:
+      - node-5-config:/etc/buckwild
+      - node-5-logs:/var/log/buckwild
+    environment:
+      - NODE_ID=node-5
+      - NODE_IP=172.30.0.14
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector-node-5:4317
+      - OTEL_SERVICE_NAME=buckwild-node-5
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=topology-test,node.id=5
+      - RUST_LOG=info
+    cap_add:
+      - NET_ADMIN
+      - BPF
+    devices:
+      - /dev/net/tun
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      otel-collector-node-5:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # OTEL Collector Sidecar for Node 5
+  otel-collector-node-5:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    container_name: otel-collector-node-5
+    hostname: otel-collector-node-5
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ../otel/collector-config.yaml:/etc/otel-collector-config.yaml
+    networks:
+      buckwild-net:
+        ipv4_address: 172.30.0.19
+      observability:
+    ports:
+      - "4317"  # OTLP gRPC receiver (internal only)
+      - "4318"  # OTLP HTTP receiver (internal only)
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped

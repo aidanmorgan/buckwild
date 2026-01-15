@@ -1,0 +1,125 @@
+# Dockerfile.unified - Multi-stage build for Buckwild
+# Build: docker build -f Dockerfile.unified -t buckwild-e2e:latest ../..
+#
+# WHY multi-stage: Build tools (clang, cargo, cmake) add ~2GB to image.
+# Runtime only needs ~150MB. Multi-stage reduces attack surface and size.
+
+ARG RUST_VERSION=1.75
+ARG LLVM_VERSION=14
+
+# === Base build image with common dependencies ===
+FROM debian:bookworm-slim AS build-base
+
+# WHY bookworm-slim: glibc compatibility for eBPF tooling (Alpine uses musl)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    ca-certificates \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# === C Library Build Stage ===
+FROM build-base AS c-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake \
+    ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build/c
+COPY src/net/ssd/ ./src/net/ssd/
+COPY src/common/c/ ./src/common/c/
+
+# WHY Ninja: Faster parallel builds than Make, better error messages
+RUN cmake -G Ninja -B build -S src/net/ssd \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/opt/buckwild \
+    && cmake --build build --parallel \
+    && cmake --install build
+
+# === Rust Build Stage ===
+FROM build-base AS rust-builder
+
+ARG RUST_VERSION
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --default-toolchain ${RUST_VERSION}
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+WORKDIR /build/rust
+COPY Cargo.toml Cargo.lock ./
+COPY src/ ./src/
+
+# WHY copy C libs: FFI crate needs libbuckwild_network.so at link time
+COPY --from=c-builder /opt/buckwild/lib /opt/buckwild/lib
+ENV LIBRARY_PATH=/opt/buckwild/lib
+ENV LD_LIBRARY_PATH=/opt/buckwild/lib
+
+# WHY release profile: Debug builds are 10x larger and significantly slower
+RUN cargo build --release --package buckwild-daemon --package buckwild-tools \
+    && strip target/release/buckwild-daemon target/release/buckwild-tools
+
+# === eBPF Build Stage ===
+FROM build-base AS ebpf-builder
+
+ARG LLVM_VERSION
+# WHY linux-headers-generic: eBPF CO-RE requires BTF (BPF Type Format) from kernel 5.15+
+# BTF provides type information allowing compiled eBPF to run on different kernel versions
+# WHY clang-14+: Modern BPF features (CO-RE relocations, BTF) require LLVM 14 minimum
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    clang-${LLVM_VERSION} \
+    llvm-${LLVM_VERSION} \
+    libelf-dev \
+    linux-headers-generic \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/bin/clang-${LLVM_VERSION} /usr/bin/clang \
+    && ln -s /usr/bin/llc-${LLVM_VERSION} /usr/bin/llc
+
+WORKDIR /build/ebpf
+COPY src/ebpf/c/ ./
+
+# WHY version check: Ensure clang 14+ is actually installed (not just symlinked older version)
+RUN clang --version | grep -E 'clang version (14|15|16|17)' || \
+    (echo "ERROR: Clang 14+ required for CO-RE/BTF support" && exit 1)
+
+# WHY -target bpf: Generates BPF bytecode instead of native code
+# WHY -O2: BPF verifier rejects unoptimized code (too many instructions)
+# WHY -g: Preserves BTF debug info for CO-RE relocations
+RUN clang -target bpf -O2 -g -c xdp_redirect.c -o xdp_redirect.o \
+    && clang -target bpf -O2 -g -c tc_egress.c -o tc_egress.o \
+    && llvm-objdump -S xdp_redirect.o > /dev/null  # Verify valid BPF
+
+# === Runtime Stage ===
+FROM debian:bookworm-slim AS runtime
+
+# WHY iproute2: Daemon manages TUN devices and routing tables (ip tuntap, ip route)
+# WHY iptables: NAT rules for VPN traffic forwarding
+# WHY libelf1: eBPF loader requires ELF parsing at runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 \
+    libelf1 \
+    iproute2 \
+    iptables \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -r -s /bin/false buckwild
+
+# Copy artifacts from build stages
+COPY --from=c-builder /opt/buckwild/lib /opt/buckwild/lib
+COPY --from=rust-builder /build/rust/target/release/buckwild-daemon /usr/local/bin/
+COPY --from=rust-builder /build/rust/target/release/buckwild-tools /usr/local/bin/
+COPY --from=ebpf-builder /build/ebpf/*.o /opt/buckwild/ebpf/
+
+ENV LD_LIBRARY_PATH=/opt/buckwild/lib
+
+# WHY run as root: eBPF and TUN require CAP_NET_ADMIN + CAP_BPF capabilities
+# These cannot be granted to non-root users in standard Docker
+# Tradeoff: Reduced security boundary for E2E testing (acceptable in test environment)
+# Production: Would use capability-aware init system or Kubernetes securityContext
+
+HEALTHCHECK --interval=5s --timeout=3s --start-period=10s \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+ENTRYPOINT ["buckwild-daemon"]
+CMD ["--config", "/etc/buckwild/config.toml"]

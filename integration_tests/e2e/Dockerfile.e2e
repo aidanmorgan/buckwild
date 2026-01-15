@@ -1,0 +1,39 @@
+# E2E testing runtime image
+# Pre-built binaries are copied from devcontainer build output
+
+FROM debian:bookworm-slim
+
+# Install runtime dependencies and networking tools
+RUN apt-get update && apt-get install -y \
+    iproute2 \
+    iptables \
+    netcat-openbsd \
+    tcpdump \
+    iperf3 \
+    curl \
+    jq \
+    libssl3 \
+    python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy pre-built binaries from devcontainer build output
+COPY build/linux-aarch64/buckwild-daemon /usr/local/bin/buckwild-daemon
+COPY build/linux-aarch64/buckwild_cli /usr/local/bin/buckwild-cli
+RUN chmod +x /usr/local/bin/buckwild-daemon /usr/local/bin/buckwild-cli
+
+# Copy pre-built libnetssd.so library
+COPY build/linux-aarch64/libbuckwild_netssd.so /usr/local/lib/libbuckwild_netssd.so
+RUN ldconfig
+
+# Copy eBPF programs
+RUN mkdir -p /usr/lib/buckwild/ebpf
+COPY build/linux-aarch64/*.o /usr/lib/buckwild/ebpf/
+
+# Create PSK directory with owner-only permissions
+RUN mkdir -p /etc/buckwild/psk && chmod 700 /etc/buckwild/psk
+
+# Expose health check port
+EXPOSE 8080
+
+# Default command
+CMD ["buckwild-daemon"]

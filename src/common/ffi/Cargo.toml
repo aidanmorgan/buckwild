@@ -1,0 +1,22 @@
+[package]
+name = "buckwild-ffi"
+version = "0.1.0"
+edition = "2021"
+authors = ["Buckwild Team"]
+description = "FFI bindings to C TUN device library"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+libc = "0.2"
+thiserror = "2.0"
+tracing = "0.1"
+
+[dev-dependencies]
+
+[lib]
+name = "buckwild_ffi"
+path = "src/lib.rs"
+
+# This crate provides unsafe FFI bindings - document safety requirements
+[package.metadata.docs.rs]
+rustc-args = ["--cfg", "docsrs"]

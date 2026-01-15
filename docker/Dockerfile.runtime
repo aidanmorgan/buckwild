@@ -1,0 +1,82 @@
+# Dockerfile.runtime - Minimal production runtime for Buckwild
+# Build: docker build -f docker/Dockerfile.runtime -t buckwild-runtime:latest .
+#
+# This image expects build artifacts to be copied from the devcontainer build.
+# It contains ONLY runtime dependencies - no build tools.
+
+FROM debian:bookworm-slim
+
+# OCI labels for metadata
+LABEL org.opencontainers.image.title="Buckwild Runtime"
+LABEL org.opencontainers.image.description="Minimal production runtime for Buckwild VPN daemon"
+LABEL org.opencontainers.image.vendor="Buckwild Project"
+LABEL org.opencontainers.image.source="https://github.com/buckwild/buckwild"
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.version="0.1.0"
+LABEL maintainer="buckwild@example.com"
+LABEL buckwild.component="runtime"
+LABEL buckwild.type="production"
+
+# Install runtime dependencies only
+# libssl3: SSL/TLS cryptography
+# libelf1: eBPF loader requires ELF parsing
+# iproute2: TUN device and routing table management (ip tuntap, ip route)
+# iptables: NAT rules for VPN traffic forwarding
+# curl: Health check endpoint
+# ca-certificates: SSL certificate verification
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 \
+    libelf1 \
+    iproute2 \
+    iptables \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Create non-root user
+# Note: Daemon requires CAP_NET_ADMIN and CAP_BPF for TUN/eBPF operations
+# In production, grant capabilities via systemd or Kubernetes securityContext
+RUN useradd -r -s /bin/false -u 1001 buckwild \
+    && mkdir -p /etc/buckwild /var/lib/buckwild /var/log/buckwild /opt/buckwild/lib /opt/buckwild/ebpf \
+    && chown -R buckwild:buckwild /etc/buckwild /var/lib/buckwild /var/log/buckwild
+
+# Copy built artifacts from devcontainer build
+# These paths match the devcontainer build output locations
+# C library (network SSD)
+COPY --chown=buckwild:buckwild build/linux-*/lib/libbuckwild_netssd.so /opt/buckwild/lib/
+
+# Rust binaries
+COPY --chown=buckwild:buckwild target/release/buckwild-daemon /usr/local/bin/
+COPY --chown=buckwild:buckwild target/release/buckwild-tools /usr/local/bin/
+
+# eBPF programs
+COPY --chown=buckwild:buckwild build/linux-*/ebpf/*.o /opt/buckwild/ebpf/
+
+# Set library path for dynamic linking
+ENV LD_LIBRARY_PATH=/opt/buckwild/lib
+
+# Set working directory
+WORKDIR /var/lib/buckwild
+
+# Expose health check port
+EXPOSE 8080
+
+# Health check configuration
+# Interval: Check every 30s
+# Timeout: Fail if check takes >3s
+# Start period: Grace period for startup
+# Retries: Fail after 3 consecutive failures
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Run as non-root user
+# Note: Container must be started with --cap-add=NET_ADMIN --cap-add=BPF
+# or equivalent capability grants for TUN/eBPF operations
+USER buckwild
+
+# Default entrypoint
+ENTRYPOINT ["buckwild-daemon"]
+
+# Default command (can be overridden)
+CMD ["--config", "/etc/buckwild/config.toml"]
